@@ -1,0 +1,23 @@
+[project]
+name = "jarvis"
+version = "0.1.0"
+description = "A local-first assistant, starting with durable fake-backed chat"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.0",
+    "pytest>=9,<10",
+    "ruff>=0.16.10",
+]
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jarvis"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

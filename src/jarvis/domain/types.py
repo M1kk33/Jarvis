@@ -1,0 +1,129 @@
+"""Backend-neutral conversation and streaming records."""
+
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Literal
+
+
+class TurnStatus(StrEnum):
+    PENDING = "pending"
+    COMPLETE = "complete"
+    FAILED = "failed"
+    INTERRUPTED = "interrupted"
+
+
+NORMALIZED_ERROR_CODES = frozenset(
+    {
+        "invalid_request",
+        "unsupported_capability",
+        "unavailable",
+        "out_of_memory",
+        "timeout",
+        "cancelled",
+        "backend_crashed",
+    }
+)
+
+
+class ConversationError(Exception):
+    """Base class for expected conversation errors."""
+
+
+class ConversationNotFound(ConversationError):
+    pass
+
+
+class ActiveTurnError(ConversationError):
+    pass
+
+
+class SubmissionConflict(ConversationError):
+    pass
+
+
+class StaleTurnError(ConversationError):
+    pass
+
+
+class RequestFailure(ConversationError):
+    def __init__(self, code: str, detail: str) -> None:
+        if code not in NORMALIZED_ERROR_CODES:
+            raise ValueError("Unknown normalized error code")
+        self.code = code
+        super().__init__(detail)
+
+
+class ProviderFailure(RequestFailure):
+    pass
+
+
+class StorageFailure(ConversationError):
+    pass
+
+
+@dataclass(frozen=True)
+class StreamDelta:
+    text: str
+
+
+@dataclass(frozen=True)
+class StreamTerminal:
+    error_code: str | None = None
+
+
+StreamEvent = StreamDelta | StreamTerminal
+
+
+@dataclass(frozen=True)
+class Draft:
+    turn_id: str
+    text: str
+    status: Literal["draft", "interrupted"]
+
+
+@dataclass(frozen=True)
+class TextPart:
+    text: str
+    type: Literal["text"] = "text"
+
+
+@dataclass(frozen=True)
+class Conversation:
+    id: str
+    title: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class Turn:
+    id: str
+    conversation_id: str
+    position: int
+    submission_id: str
+    status: TurnStatus
+    created_at: str
+    error_code: str | None
+
+
+@dataclass(frozen=True)
+class Message:
+    id: str
+    conversation_id: str
+    turn_id: str
+    position: int
+    role: Literal["user", "assistant"]
+    parts: tuple[TextPart, ...]
+    status: Literal["complete"]
+    turn_status: TurnStatus
+    created_at: str
+
+    @property
+    def text(self) -> str:
+        return "".join(part.text for part in self.parts)
+
+
+@dataclass(frozen=True)
+class SendResult:
+    turn: Turn
+    answer: Message | None
+    duplicate: bool
