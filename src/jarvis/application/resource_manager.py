@@ -338,6 +338,29 @@ class ResourceManager:
             self._condition.notify_all()
             return True
 
+    async def abort_request(self, handle: OperationHandle) -> None:
+        """Dispose a runtime after an unverified or cancelled inference request."""
+        async with self._condition:
+            if (
+                self._state is ResourceState.BUSY
+                and handle.generation == self._generation
+                and handle.request_id == self._request_id
+            ):
+                self._owner_task = None
+                await self._stop_locked()
+
+    async def unload(self) -> None:
+        """Explicitly release an idle resident runtime."""
+        async with self._condition:
+            if asyncio.current_task() is self._owner_task:
+                raise ResourceUnavailable("Cannot unload during the active request")
+            while self._state is ResourceState.BUSY:
+                await self._condition.wait()
+            if self._state is ResourceState.READY:
+                await self._stop_locked()
+            elif self._state is ResourceState.UNAVAILABLE:
+                raise ResourceUnavailable("Owned runtime cleanup is unverified")
+
     async def close(self) -> None:
         needs_recovery = False
         async with self._condition:

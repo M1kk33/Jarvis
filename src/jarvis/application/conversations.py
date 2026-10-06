@@ -10,7 +10,13 @@ from threading import Event
 from uuid import uuid4
 
 from jarvis.application.context import ContextBuilder
-from jarvis.domain.ports import ChatProvider, ConversationStore
+from jarvis.application.resource_manager import ResourceManager, _settle
+from jarvis.domain.ports import ChatProvider, ConversationStore, ExactTokenCounter
+from jarvis.domain.resources import (
+    AdmissionDenied,
+    ResourceUnavailable,
+    RuntimeProfile,
+)
 from jarvis.domain.types import (
     NORMALIZED_ERROR_CODES,
     Conversation,
@@ -33,6 +39,10 @@ def _error_code(exc: Exception) -> str:
         return exc.code
     if isinstance(exc, TimeoutError):
         return "timeout"
+    if isinstance(exc, AdmissionDenied):
+        return "out_of_memory"
+    if isinstance(exc, ResourceUnavailable):
+        return "unavailable"
     if isinstance(exc, MemoryError):
         return "out_of_memory"
     if isinstance(exc, (ConnectionError, OSError)):
@@ -49,12 +59,18 @@ class ConversationService:
         context: ContextBuilder | None = None,
         instructions: str = "",
         diagnostics: Callable[[str, dict[str, str | int]], None] | None = None,
+        resource_manager: ResourceManager | None = None,
+        runtime_profile: RuntimeProfile | None = None,
     ) -> None:
         self.store = store
         self.provider = provider
         self.context = context or ContextBuilder()
         self.instructions = instructions
         self.diagnostics = diagnostics or (lambda _event, _fields: None)
+        if (resource_manager is None) != (runtime_profile is None):
+            raise ValueError("Runtime manager and profile must be configured together")
+        self.resource_manager = resource_manager
+        self.runtime_profile = runtime_profile
 
     def create(self, title: str) -> Conversation:
         return self.store.create_conversation(title)
@@ -123,9 +139,27 @@ class ConversationService:
             )
             selected_groups = {item.group_id for item in selection.items}
             selected = [m for m in messages if m.turn_id in selected_groups]
-            answer_text = await self._consume_stream(
-                active_turn.id, selected, signal, on_delta
-            )
+            if self.resource_manager is not None:
+                assert self.runtime_profile is not None
+                handle = await self.resource_manager.acquire(self.runtime_profile)
+                try:
+                    if isinstance(self.provider, ExactTokenCounter):
+                        selected = await self._fit_exact_context(selected)
+                    answer_text = await self._consume_stream(
+                        active_turn.id, selected, signal, on_delta
+                    )
+                except BaseException:
+                    signal.set()
+                    await _settle(
+                        asyncio.create_task(self.resource_manager.abort_request(handle))
+                    )
+                    raise
+                finally:
+                    await handle.release()
+            else:
+                answer_text = await self._consume_stream(
+                    active_turn.id, selected, signal, on_delta
+                )
             phase = "completion"
             answer = await self.store.run(
                 lambda: self.store.complete_turn(active_turn.id, answer_text)
@@ -168,10 +202,43 @@ class ConversationService:
                 raise
             if phase != "generation":
                 raise
+            if isinstance(exc, (AdmissionDenied, ResourceUnavailable)):
+                raise ProviderFailure(_error_code(exc), str(exc)) from exc
             raise ProviderFailure(
                 _error_code(exc),
                 f"Chat request failed ({_error_code(exc)}); the input remains stored",
             ) from exc
+
+    async def _fit_exact_context(self, selected: list[Message]) -> list[Message]:
+        assert isinstance(self.provider, ExactTokenCounter)
+        limit = (
+            self.context.window
+            - self.context.output_allowance
+            - self.context.safety_margin
+        )
+        current_turn_id = selected[-1].turn_id
+        while True:
+            count_task = asyncio.create_task(
+                asyncio.to_thread(
+                    self.provider.count_prompt_tokens, selected, self.instructions
+                )
+            )
+            try:
+                count = await asyncio.shield(count_task)
+            except asyncio.CancelledError:
+                try:
+                    await _settle(count_task)
+                except Exception:  # noqa: BLE001, S110 - resource cleanup still follows
+                    pass
+                raise
+            if count <= limit:
+                return selected
+            oldest_turn_id = selected[0].turn_id
+            if oldest_turn_id == current_turn_id:
+                raise RequestFailure(
+                    "invalid_request", "Required prompt exceeds model context budget"
+                )
+            selected = [m for m in selected if m.turn_id != oldest_turn_id]
 
     async def _consume_stream(
         self,
@@ -190,7 +257,16 @@ class ConversationService:
         while True:
             if cancel.is_set():
                 raise RequestFailure("cancelled", "Chat request was cancelled")
-            event = await asyncio.to_thread(next, iterator, None)
+            next_event = asyncio.create_task(asyncio.to_thread(next, iterator, None))
+            try:
+                event = await asyncio.shield(next_event)
+            except asyncio.CancelledError:
+                cancel.set()
+                try:
+                    await _settle(next_event)
+                except Exception:  # noqa: BLE001, S110 - cleanup still follows
+                    pass
+                raise
             if event is None:
                 break
             if isinstance(event, StreamTerminal):
@@ -218,7 +294,10 @@ class ConversationService:
                 )
             chunks.append(event.text)
             text = "".join(chunks)
-            if self.context.estimator.count(text) > self.context.output_allowance:
+            if (
+                not isinstance(self.provider, ExactTokenCounter)
+                and self.context.estimator.count(text) > self.context.output_allowance
+            ):
                 raise RequestFailure(
                     "invalid_request", "Reply exceeds output allowance"
                 )

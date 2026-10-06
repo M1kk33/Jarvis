@@ -1,0 +1,20 @@
+# M4 text profile. Paths are relative to --data-dir. Peaks are provisional until
+# the local calibration command records measurements on this PC.
+# Model: bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF revision
+# ae44f08e1392f39c0e474af10c3ff8355c8b6688, Q4_K_M file.
+# Runtime: ggml-org/llama.cpp b11429 (commit d81235049), Windows CUDA 12.4.
+[text_model]
+name = "qwen3-4b-instruct-2507-q4_k_m"
+runtime_version = "b11429"
+executable = "runtimes/llama-b11429/bin/llama-server.exe"
+executable_sha256 = "7e236243c9b670c6a49410c03186fd575c57a0efe3fd8a21d8727503d571d5b6"
+model = "models/Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+model_sha256 = "2fde00ce69dd4899c70d020845e2638353015bba0fdf161b3eb965f2bca4464e"
+device_uuid = "GPU-bfa7eedf-5d52-9ccf-76e2-86b3891ab4d7"
+device_index = 0
+cold_vram_gib = 5.0
+cold_ram_gib = 6.0
+warm_vram_headroom_gib = 0.5
+warm_ram_headroom_gib = 0.5
+calibrated = false
+idle_seconds = 120.0

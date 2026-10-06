@@ -5,12 +5,16 @@ import asyncio
 from uuid import uuid4
 
 from jarvis.application.conversations import ConversationService
+from jarvis.application.resource_manager import ResourceManager
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="jarvis")
     parser.add_argument(
         "--data-dir", required=True, help="Explicit private data directory"
+    )
+    parser.add_argument(
+        "--profile", help="Pinned local model profile; omit for the offline fake"
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -28,10 +32,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     send.add_argument(
         "--submission-id", help="Reuse this ID when retrying the same submission"
     )
+    session = commands.add_parser("session", help="Interactive local model session")
+    session.add_argument("conversation_id")
+    commands.add_parser("calibrate", help="Measure the pinned local model on this PC")
     return parser.parse_args(argv)
 
 
-def dispatch(args: argparse.Namespace, service: ConversationService) -> int:
+def dispatch(
+    args: argparse.Namespace,
+    service: ConversationService,
+    manager: ResourceManager | None = None,
+) -> int:
     if args.command == "create":
         print(service.create(args.title).id)
     elif args.command == "list":
@@ -64,15 +75,20 @@ def dispatch(args: argparse.Namespace, service: ConversationService) -> int:
             emitted = True
             print(delta, end="", flush=True)
 
-        try:
-            result = asyncio.run(
-                service.send_async(
+        async def send_once():
+            try:
+                return await service.send_async(
                     args.conversation_id,
                     args.text,
                     submission_id,
                     on_delta=output_delta,
                 )
-            )
+            finally:
+                if manager is not None:
+                    await manager.close()
+
+        try:
+            result = asyncio.run(send_once())
         finally:
             if emitted:
                 print()
@@ -81,4 +97,44 @@ def dispatch(args: argparse.Namespace, service: ConversationService) -> int:
         print(f"turn_status={result.turn.status.value}")
         if result.duplicate and result.answer is not None:
             print(result.answer.text)
+    elif args.command == "session":
+        if manager is None:
+            raise ValueError("Interactive session requires --profile")
+
+        async def interactive() -> None:
+            try:
+                while True:
+                    line = await asyncio.to_thread(input, "jarvis> ")
+                    if line == "/exit":
+                        return
+                    if line == "/unload":
+                        await manager.unload()
+                        print("Local model unloaded.")
+                        continue
+                    if not line.strip():
+                        continue
+                    emitted = False
+
+                    async def stream_output(delta: str) -> None:
+                        nonlocal emitted
+                        emitted = True
+                        print(delta, end="", flush=True)
+
+                    try:
+                        result = await service.send_async(
+                            args.conversation_id, line, on_delta=stream_output
+                        )
+                        if emitted:
+                            print()
+                        print(f"turn_status={result.turn.status.value}")
+                    except Exception:
+                        if emitted:
+                            print()
+                        raise
+            except EOFError:
+                return
+            finally:
+                await manager.close()
+
+        asyncio.run(interactive())
     return 0

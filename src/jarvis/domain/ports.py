@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Iterator, Sequence
 from threading import Event
-from typing import Protocol, TypeVar
+from typing import Protocol, TypeVar, runtime_checkable
 
 from jarvis.domain.types import Conversation, Draft, Message, StreamEvent, Turn
 
@@ -13,6 +13,13 @@ class ChatProvider(Protocol):
     def stream(
         self, messages: Sequence[Message], cancel: Event, instructions: str = ""
     ) -> Iterator[StreamEvent]: ...
+
+
+@runtime_checkable
+class ExactTokenCounter(Protocol):
+    def count_prompt_tokens(
+        self, messages: Sequence[Message], instructions: str
+    ) -> int: ...
 
 
 class ConversationStore(Protocol):

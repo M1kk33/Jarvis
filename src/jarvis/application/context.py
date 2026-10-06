@@ -17,6 +17,13 @@ class FakeTokenEstimator:
         return len(text.encode("utf-8"))
 
 
+class PreflightTokenEstimator:
+    """Cheap candidate selection; the local server must check the final template."""
+
+    def count(self, text: str) -> int:
+        return max(1, (len(text.encode("utf-8")) + 3) // 4)
+
+
 @dataclass(frozen=True)
 class ContextItem:
     role: str

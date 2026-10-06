@@ -1,6 +1,6 @@
 # Jarvis implementation rules
 
-- Work only on the assigned milestone in `ARCHITECTURE.md`. M3 ends at exclusive fake-process ownership, admission, switching, idle release, and verified Windows process-tree cleanup. Do not add real models, downloads, tools, jobs, a web UI, voice, or retrieval.
+- Work only on the assigned milestone in `ARCHITECTURE.md`. M4 adds one pinned local llama.cpp/Qwen text profile, authenticated loopback streaming, supervised load/unload, and measured admission. Do not add tool execution, jobs, a web UI, voice, images, retrieval, cloud inference, or other models.
 - Keep the direction `interfaces -> application -> domain`; infrastructure implements domain contracts, and bootstrap alone wires concrete classes. Core imports must need no GPU, model, network, or inference package.
 - SQLite owns conversation and turn state. Submission and final reply each commit atomically with their turn transition. One database thread owns the connection; cancellation of an await requires outcome verification by stable identity. Check expected state before completion and acknowledge only committed results.
 - Preserve incomplete and failed turns. A reused submission ID must not call the provider again or create messages; changed text with the same ID is an error.

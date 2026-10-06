@@ -1,6 +1,6 @@
-# Jarvis (M3)
+# Jarvis (M4)
 
-Jarvis currently supports durable terminal conversations using a deterministic fake provider. M2 added bounded prompt selection, streamed terminal output, recoverable partial drafts, cancellation handling, and private redacted diagnostics. M3 adds an exclusive resource manager and Windows Job Object supervisor exercised with fake child processes. It does not run a language model. Messages and turn status live in SQLite so a conversation can be reopened after the application exits.
+Jarvis supports durable terminal conversations with a deterministic offline fake or one pinned local Qwen3-4B text model. M4 adds a supervised llama.cpp server, authenticated loopback streaming, exact template token checks, explicit unload, and measured memory admission. Messages and turn status live in SQLite so a conversation can be reopened after the application exits.
 
 ## Setup
 
@@ -10,7 +10,7 @@ On Windows, install [uv](https://docs.astral.sh/uv/) and run from this directory
 uv sync --python 3.12
 ```
 
-This installs the locked Python dependencies. M3 requires native Windows for its lifecycle tests; neither terminal chat nor the fake workers require a model download, GPU, or network service. The data directory is always chosen explicitly; use a private local folder outside the source repository, for example `E:\JarvisData`.
+This installs the locked Python dependencies. The offline fake and tests require no model download or GPU. The local model requires native Windows, a compatible NVIDIA GPU and driver, and the pinned runtime/model files. The data directory is always chosen explicitly; use a private local folder outside the source repository, for example `E:\JarvisData`.
 
 ## Terminal commands
 
@@ -21,11 +21,22 @@ uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData send CONVERSATION
 uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData resume CONVERSATION_ID
 ```
 
+For the local model, copy [the example profile](profiles/qwen3-4b-instruct-2507.example.toml) to `E:\JarvisData\model.toml` and place its exact pinned files at the paths in that profile. M4 pins llama.cpp b11429 (Windows CUDA 12.4, `llama-server.exe` SHA-256 `7e236243c9b670c6a49410c03186fd575c57a0efe3fd8a21d8727503d571d5b6`) and `bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF` revision `ae44f08e1392f39c0e474af10c3ff8355c8b6688`, Q4_K_M GGUF SHA-256 `2fde00ce69dd4899c70d020845e2638353015bba0fdf161b3eb965f2bca4464e`. Change `device_uuid` and `device_index` only to match the GPU being used. Downloads are explicit setup actions; normal chat works offline. The runtime and model remain outside this repository. See the [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases/tag/b11429) and [GGUF conversion](https://huggingface.co/bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF/tree/ae44f08e1392f39c0e474af10c3ff8355c8b6688) for the pinned sources.
+
+```powershell
+uv run --offline --locked --python 3.12 python -m jarvis --data-dir E:\JarvisData --profile E:\JarvisData\model.toml calibrate
+uv run --offline --locked --python 3.12 python -m jarvis --data-dir E:\JarvisData --profile E:\JarvisData\model.toml session CONVERSATION_ID
+```
+
+`calibrate` records system-wide free-memory samples about every 250 ms, load time, first-token time, throughput, hashes, and driver version in private `calibration.json`. It checks a long prompt and direct unauthenticated requests before reporting whether the profile bounds passed. It does not change the profile automatically; set `calibrated = true` in the private profile only after a successful run on this hardware. In `session`, type `/unload` to release the model and `/exit` to close the app. A one-shot `send` also accepts `--profile` and unloads before exiting. The model server uses one 4,096-token slot and a per-launch secret; no tool execution is available in M4.
+
 `create` prints the conversation ID. `send` prints a submission ID before calling the provider. Reuse it with `send CONVERSATION_ID "Hello" --submission-id SUBMISSION_ID` if a command's outcome is unclear; the same ID and text return the stored outcome without calling the provider again. A different text with that ID is rejected. An interrupted or failed turn remains visible in `resume` and is not silently replayed. Only one application instance may open a data directory at a time.
 
 The fake provider streams an echo with the count of selected messages it received, making restart reconstruction visible. The default budget is 4,096 estimated tokens including 512 for output and 256 for overhead; oversized required input fails explicitly and older exchanges are removed as whole groups. A partial response is kept as a draft and marked interrupted after failure or restart, never shown as a completed reply. Diagnostic metadata is stored in `logs/diagnostics.jsonl` under the chosen data directory; prompts and response text are excluded. The fake provider is for testing behavior, not useful AI responses.
 
-M3's fake-process lifecycle is exercised by the offline tests; terminal chat still uses the deterministic in-process fake. The manager admits at most one resident heavy worker, retains a named per-device lock while warm, and switches only after the owned process tree exits. It checks measured profile bounds against 1 GiB free VRAM and 3 GiB available RAM reserves. Missing GPU telemetry permits only a previously calibrated profile and is reported as degraded; missing RAM telemetry blocks admission. The Windows supervisor assigns each worker to a kill-on-close Job Object at creation and bounds cleanup. No real model profile is shipped in M3.
+The manager admits at most one resident heavy worker, retains a named per-device lock while warm, and releases it only after the owned process tree exits. It checks the profile's cold peak or warm additional headroom against 1 GiB free VRAM and 3 GiB available RAM reserves. Missing GPU telemetry permits only a previously calibrated profile and is reported as degraded; missing RAM telemetry blocks admission. The Windows supervisor assigns the model process to a kill-on-close Job Object at creation and verifies cleanup.
+
+On this PC (RTX 3060 Ti 8 GiB, driver 576.80), the M4 qualification used a 2,810-token prompt and observed a 3.136 GiB VRAM / 2.947 GiB RAM cold peak, then up to 0.082 GiB VRAM / 0.170 GiB RAM additional demand while warm. Load took 3.315 s, first token 0.993 s, and the 371-token reply averaged 99.87 tokens/s after first token. These are sampled system-wide observations, not guarantees; the conservative profile bounds remain 5/6 GiB cold and 0.5/0.5 GiB warm.
 
 ## Checks
 
@@ -36,4 +47,4 @@ uv run --offline --locked --python 3.12 ruff format --check .
 uv run --offline --locked --python 3.12 mypy src/jarvis
 ```
 
-The tests use temporary real SQLite databases and fake Windows processes, and run offline. See `ARCHITECTURE.md` for the design and later milestones; M1 through M3 are implemented here.
+The tests use temporary real SQLite databases, fake Windows processes, and recorded HTTP/stream fixtures; they run offline. Hardware calibration and chat are optional separate checks. See `ARCHITECTURE.md` for the design and later milestones; M1 through M4 are implemented here.
