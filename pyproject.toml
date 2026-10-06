@@ -1,7 +1,7 @@
 [project]
 name = "jarvis"
 version = "0.1.0"
-description = "A local-first assistant with durable terminal chat and a pinned local text model"
+description = "A local-first assistant with durable chat and validated read-only tools"
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28,<1",

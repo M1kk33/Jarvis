@@ -15,12 +15,14 @@ from uuid import uuid4
 import httpx
 
 from jarvis.domain.resources import RuntimeIdentity, RuntimeProfile, RuntimeStartFailure
+from jarvis.domain.tools import ContextRecord, ToolContextRecord
 from jarvis.domain.types import (
     Message,
     ProviderFailure,
     StreamDelta,
     StreamEvent,
     StreamTerminal,
+    StreamToolCall,
 )
 from jarvis.infrastructure.local_profile import LocalTextProfile
 from jarvis.infrastructure.windows_process import (
@@ -43,11 +45,41 @@ def _free_loopback_port() -> int:
         return int(listener.getsockname()[1])
 
 
-def _messages(messages: Sequence[Message], instructions: str) -> list[dict[str, str]]:
-    result: list[dict[str, str]] = []
+def _messages(
+    messages: Sequence[ContextRecord], instructions: str
+) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
     if instructions:
         result.append({"role": "system", "content": instructions})
-    result.extend({"role": item.role, "content": item.text} for item in messages)
+    for item in messages:
+        if isinstance(item, ToolContextRecord):
+            if item.role == "assistant_tool_call":
+                result.append(
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": item.model_call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": item.name,
+                                    "arguments": item.content_json,
+                                },
+                            }
+                        ],
+                    }
+                )
+            else:
+                result.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": item.model_call_id,
+                        "content": item.content_json,
+                    }
+                )
+        else:
+            result.append({"role": item.role, "content": item.text})
     return result
 
 
@@ -272,6 +304,22 @@ class LlamaChatProvider:
     def count_prompt_tokens(
         self, messages: Sequence[Message], instructions: str
     ) -> int:
+        return self._count_tokens(messages, instructions, None)
+
+    def count_prompt_tokens_with_tools(
+        self,
+        messages: Sequence[ContextRecord],
+        instructions: str,
+        tools: list[dict[str, object]],
+    ) -> int:
+        return self._count_tokens(messages, instructions, tools)
+
+    def _count_tokens(
+        self,
+        messages: Sequence[ContextRecord],
+        instructions: str,
+        tools: list[dict[str, object]] | None,
+    ) -> int:
         endpoint = self.runtime.endpoint
         with httpx.Client(
             base_url=endpoint.base_url,
@@ -279,10 +327,17 @@ class LlamaChatProvider:
             timeout=15,
             transport=self.transport,
         ) as client:
+            payload: dict[str, object] = {
+                "messages": _messages(messages, instructions),
+                "max_tokens": 512,
+            }
+            if tools is not None:
+                payload["tools"] = tools
+                payload["parallel_tool_calls"] = False
             response = client.post(
                 "/v1/chat/completions/input_tokens",
                 headers={"Authorization": f"Bearer {endpoint.api_key}"},
-                json={"messages": _messages(messages, instructions), "max_tokens": 512},
+                json=payload,
             )
             self._check_status(response)
             value = response.json().get("input_tokens")
@@ -373,9 +428,36 @@ class LlamaChatProvider:
     def stream(
         self, messages: Sequence[Message], cancel: Event, instructions: str = ""
     ) -> Iterator[StreamEvent]:
+        return self._stream(messages, cancel, instructions, None)
+
+    def stream_with_tools(
+        self,
+        messages: Sequence[ContextRecord],
+        cancel: Event,
+        instructions: str,
+        tools: list[dict[str, object]],
+    ) -> Iterator[StreamEvent]:
+        return self._stream(messages, cancel, instructions, tools)
+
+    def _stream(
+        self,
+        messages: Sequence[ContextRecord],
+        cancel: Event,
+        instructions: str,
+        tools: list[dict[str, object]] | None,
+    ) -> Iterator[StreamEvent]:
         endpoint = self.runtime.endpoint
         deadline = time.monotonic() + 120
         headers = {"Authorization": f"Bearer {endpoint.api_key}"}
+        payload: dict[str, object] = {
+            "messages": _messages(messages, instructions),
+            "max_tokens": 512,
+            "stream": True,
+            "parse_tool_calls": tools is not None,
+        }
+        if tools is not None:
+            payload["tools"] = tools
+            payload["parallel_tool_calls"] = False
         try:
             with (
                 httpx.Client(
@@ -388,17 +470,16 @@ class LlamaChatProvider:
                     "POST",
                     "/v1/chat/completions",
                     headers=headers,
-                    json={
-                        "messages": _messages(messages, instructions),
-                        "max_tokens": 512,
-                        "stream": True,
-                        "parse_tool_calls": False,
-                    },
+                    json=payload,
                 ) as response,
             ):
                 self._check_status(response)
                 finished = False
                 done = False
+                finish_reason = ""
+                call_id = ""
+                call_name = ""
+                call_arguments = ""
                 for line in _bounded_lines(response):
                     if cancel.is_set():
                         raise ProviderFailure(
@@ -438,12 +519,66 @@ class LlamaChatProvider:
                             "backend_crashed", "Invalid stream choice"
                         )
                     delta = choice.get("delta")
-                    if not isinstance(delta, dict) or any(
-                        key in delta for key in ("tool_calls", "function_call")
-                    ):
+                    if not isinstance(delta, dict) or "function_call" in delta:
                         raise ProviderFailure(
-                            "invalid_request", "Tool calls are unavailable in M4"
+                            "backend_crashed", "Invalid model stream delta"
                         )
+                    calls = delta.get("tool_calls")
+                    if calls is not None:
+                        if tools is None:
+                            raise ProviderFailure(
+                                "invalid_request", "Tool calls are unavailable"
+                            )
+                        if not isinstance(calls, list) or len(calls) != 1:
+                            raise ProviderFailure(
+                                "backend_crashed", "Parallel or malformed tool calls"
+                            )
+                        call = calls[0]
+                        if (
+                            not isinstance(call, dict)
+                            or type(call.get("index")) is not int
+                            or call["index"] != 0
+                        ):
+                            raise ProviderFailure(
+                                "backend_crashed", "Invalid tool call index"
+                            )
+                        new_id = call.get("id")
+                        if new_id is not None:
+                            if not isinstance(new_id, str) or (
+                                call_id and call_id != new_id
+                            ):
+                                raise ProviderFailure(
+                                    "backend_crashed", "Invalid tool call ID"
+                                )
+                            call_id = new_id
+                        if call.get("type", "function") != "function":
+                            raise ProviderFailure(
+                                "backend_crashed", "Unsupported tool call type"
+                            )
+                        function = call.get("function", {})
+                        if not isinstance(function, dict):
+                            raise ProviderFailure(
+                                "backend_crashed", "Invalid tool function"
+                            )
+                        new_name = function.get("name")
+                        if new_name is not None:
+                            if not isinstance(new_name, str) or (
+                                call_name and call_name != new_name
+                            ):
+                                raise ProviderFailure(
+                                    "backend_crashed", "Invalid tool name"
+                                )
+                            call_name = new_name
+                        fragment = function.get("arguments", "")
+                        if not isinstance(fragment, str):
+                            raise ProviderFailure(
+                                "backend_crashed", "Invalid tool arguments"
+                            )
+                        call_arguments += fragment
+                        if len(call_arguments.encode("utf-8")) > 4096:
+                            raise ProviderFailure(
+                                "invalid_request", "Tool arguments are too large"
+                            )
                     content = delta.get("content")
                     if content is not None:
                         if not isinstance(content, str):
@@ -454,15 +589,30 @@ class LlamaChatProvider:
                             yield StreamDelta(content)
                     reason = choice.get("finish_reason")
                     if reason is not None:
-                        if reason != "stop" or finished:
+                        if (
+                            reason
+                            not in (
+                                {"stop", "tool_calls"}
+                                if tools is not None
+                                else {"stop"}
+                            )
+                            or finished
+                        ):
                             raise ProviderFailure(
                                 "backend_crashed", "Incomplete model reply"
                             )
                         finished = True
+                        finish_reason = reason
                 if not done or not finished:
                     raise ProviderFailure(
                         "backend_crashed", "Stream ended before completion"
                     )
+                if finish_reason == "tool_calls":
+                    if not call_id or not call_name or not call_arguments:
+                        raise ProviderFailure("backend_crashed", "Incomplete tool call")
+                    yield StreamToolCall(call_id, call_name, call_arguments)
+                elif call_id or call_name or call_arguments:
+                    raise ProviderFailure("backend_crashed", "Unfinished tool call")
                 yield StreamTerminal()
         except (httpx.TimeoutException, TimeoutError) as exc:
             raise ProviderFailure("timeout", "Local model stream timed out") from exc

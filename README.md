@@ -1,6 +1,6 @@
-# Jarvis (M4)
+# Jarvis (M5)
 
-Jarvis supports durable terminal conversations with a deterministic offline fake or one pinned local Qwen3-4B text model. M4 adds a supervised llama.cpp server, authenticated loopback streaming, exact template token checks, explicit unload, and measured memory admission. Messages and turn status live in SQLite so a conversation can be reopened after the application exits.
+Jarvis supports durable terminal conversations with a deterministic offline fake or one pinned local Qwen3-4B text model. M5 adds three validated read-only tools: current UTC time, a bounded directory listing, and a bounded UTF-8 file read. Tool proposals, approvals, execution intents, receipts, and results are durable SQLite records. No shell, network, or file-writing tool is available.
 
 ## Setup
 
@@ -28,7 +28,15 @@ uv run --offline --locked --python 3.12 python -m jarvis --data-dir E:\JarvisDat
 uv run --offline --locked --python 3.12 python -m jarvis --data-dir E:\JarvisData --profile E:\JarvisData\model.toml session CONVERSATION_ID
 ```
 
-`calibrate` records system-wide free-memory samples about every 250 ms, load time, first-token time, throughput, hashes, and driver version in private `calibration.json`. It checks a long prompt and direct unauthenticated requests before reporting whether the profile bounds passed. It does not change the profile automatically; set `calibrated = true` in the private profile only after a successful run on this hardware. In `session`, type `/unload` to release the model and `/exit` to close the app. A one-shot `send` also accepts `--profile` and unloads before exiting. The model server uses one 4,096-token slot and a per-launch secret; no tool execution is available in M4.
+`calibrate` records system-wide free-memory samples about every 250 ms, load time, first-token time, throughput, hashes, and driver version in private `calibration.json`. It checks a long prompt and direct unauthenticated requests before reporting whether the profile bounds passed. It does not change the profile automatically; set `calibrated = true` in the private profile only after a successful run on this hardware. In `session`, type `/unload` to release the model and `/exit` to close the app. A one-shot `send` also accepts `--profile` and unloads before exiting. The model server uses one 4,096-token slot and a per-launch secret.
+
+To enable file reads, create a narrow workspace directory and grant it explicitly. The private data directory itself cannot be a read root. Without `--read-root`, model sessions expose only `current_time`.
+
+```powershell
+uv run --offline --locked --python 3.12 python -m jarvis --data-dir E:\JarvisData --profile E:\JarvisData\model.toml --read-root E:\JarvisData\workspaces\default session CONVERSATION_ID
+```
+
+Paths must be absolute and remain inside an approved root. Jarvis rejects traversal, reparse points, hard links, alternate data streams, device/UNC paths, private configuration, secrets, and non-regular files. A file read is capped at 16 KiB; a listing at 100 entries. Tool calls run sequentially with a four-call limit per turn. Completed calls and results remain available to later conversation context after restart, including when the final reply was interrupted. `resume` shows each tool's durable status. The approval record and trusted fake UI are exercised in tests; the three initial tools are allowed by policy when their capabilities are enabled, so no approval prompt is presented in the terminal.
 
 `create` prints the conversation ID. `send` prints a submission ID before calling the provider. Reuse it with `send CONVERSATION_ID "Hello" --submission-id SUBMISSION_ID` if a command's outcome is unclear; the same ID and text return the stored outcome without calling the provider again. A different text with that ID is rejected. An interrupted or failed turn remains visible in `resume` and is not silently replayed. Only one application instance may open a data directory at a time.
 
@@ -47,4 +55,4 @@ uv run --offline --locked --python 3.12 ruff format --check .
 uv run --offline --locked --python 3.12 mypy src/jarvis
 ```
 
-The tests use temporary real SQLite databases, fake Windows processes, and recorded HTTP/stream fixtures; they run offline. Hardware calibration and chat are optional separate checks. See `ARCHITECTURE.md` for the design and later milestones; M1 through M4 are implemented here.
+The tests use temporary real SQLite databases, fake Windows processes, and recorded HTTP/stream fixtures; they run offline. Hardware calibration and chat are optional separate checks. The M5 live check used `read_text_file`, saved its receipt/result, then answered a follow-up after restart using that result without another file read. See `ARCHITECTURE.md` for the design and later milestones; M1 through M5 are implemented here.

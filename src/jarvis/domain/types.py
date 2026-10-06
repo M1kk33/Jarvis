@@ -71,7 +71,14 @@ class StreamTerminal:
     error_code: str | None = None
 
 
-StreamEvent = StreamDelta | StreamTerminal
+@dataclass(frozen=True)
+class StreamToolCall:
+    call_id: str
+    name: str
+    arguments_json: str
+
+
+StreamEvent = StreamDelta | StreamToolCall | StreamTerminal
 
 
 @dataclass(frozen=True)

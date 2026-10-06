@@ -16,6 +16,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--profile", help="Pinned local model profile; omit for the offline fake"
     )
+    parser.add_argument(
+        "--read-root",
+        action="append",
+        default=[],
+        help="Explicit local directory that model read tools may inspect",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     create = commands.add_parser("create", help="Create a conversation")
@@ -62,6 +68,11 @@ def dispatch(
             )
             for line in by_turn.get(turn.id, []):
                 print(line)
+            for invocation in service.get_invocations(turn.id):
+                print(
+                    f"  tool {invocation.ordinal}: {invocation.name} "
+                    f"[{invocation.status.value}]"
+                )
             draft = service.get_draft(turn.id)
             if draft is not None:
                 print(f"  draft [{draft.status}]: {draft.text}")

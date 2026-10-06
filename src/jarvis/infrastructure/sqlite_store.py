@@ -16,6 +16,13 @@ from pathlib import Path
 from typing import Self, TypeVar
 from uuid import uuid4
 
+from jarvis.domain.tools import (
+    Approval,
+    ContextRecord,
+    InvocationStatus,
+    ToolContextRecord,
+    ToolInvocation,
+)
 from jarvis.domain.types import (
     ActiveTurnError,
     Conversation,
@@ -110,7 +117,18 @@ class SqliteStore:
             raise RuntimeError("SQLite WAL mode is unavailable for this data directory")
         self._conn.execute("PRAGMA synchronous=FULL")
         self._migrate()
+        self.session_id = str(uuid4())
         with self._transaction():
+            self._conn.execute(
+                "UPDATE tool_approvals SET status='invalidated' WHERE status='issued'"
+            )
+            self._conn.execute(
+                "UPDATE tool_invocations SET status='outcome_unknown' WHERE status='intent'"
+            )
+            self._conn.execute(
+                "UPDATE tool_invocations SET status='cancelled' "
+                "WHERE status IN ('proposed', 'waiting_approval')"
+            )
             self._conn.execute(
                 "UPDATE turns SET status='interrupted', error_code='interrupted' WHERE status='pending'"
             )
@@ -150,7 +168,11 @@ class SqliteStore:
             "CREATE TABLE IF NOT EXISTS schema_migrations "
             "(version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)"
         )
-        for version, filename in ((1, "001_initial.sql"), (2, "002_drafts.sql")):
+        for version, filename in (
+            (1, "001_initial.sql"),
+            (2, "002_drafts.sql"),
+            (3, "003_tools.sql"),
+        ):
             script = (
                 resources.files("jarvis")
                 .joinpath("infrastructure", "migrations", filename)
@@ -242,6 +264,16 @@ class SqliteStore:
             )
             self._conn.execute(
                 "UPDATE turn_drafts SET status='interrupted' WHERE turn_id=?",
+                (turn_id,),
+            )
+            self._conn.execute(
+                "UPDATE tool_invocations SET status='cancelled' WHERE turn_id=? "
+                "AND status IN ('proposed', 'waiting_approval')",
+                (turn_id,),
+            )
+            self._conn.execute(
+                "UPDATE tool_approvals SET status='invalidated' WHERE turn_id=? "
+                "AND status='issued'",
                 (turn_id,),
             )
         return self.get_turn(turn_id)
@@ -357,6 +389,327 @@ class SqliteStore:
         ).fetchall()
         return [self._message(row) for row in messages], rows[-1]["position"]
 
+    @staticmethod
+    def _invocation(row: sqlite3.Row) -> ToolInvocation:
+        return ToolInvocation(
+            row["id"],
+            row["turn_id"],
+            row["conversation_id"],
+            row["ordinal"],
+            row["model_call_id"],
+            row["name"],
+            row["version"],
+            row["arguments_json"],
+            row["arguments_sha256"],
+            row["policy_version"],
+            row["target_identity"],
+            InvocationStatus(row["status"]),
+            row["decision"],
+            row["result_json"],
+            row["receipt_json"],
+        )
+
+    @_on_owner
+    def get_invocations(self, turn_id: str) -> list[ToolInvocation]:
+        rows = self._conn.execute(
+            "SELECT * FROM tool_invocations WHERE turn_id=? ORDER BY ordinal",
+            (turn_id,),
+        ).fetchall()
+        return [self._invocation(row) for row in rows]
+
+    @_on_owner
+    def get_invocation_by_call(
+        self, turn_id: str, model_call_id: str
+    ) -> ToolInvocation | None:
+        row = self._conn.execute(
+            "SELECT * FROM tool_invocations WHERE turn_id=? AND model_call_id=?",
+            (turn_id, model_call_id),
+        ).fetchone()
+        return self._invocation(row) if row is not None else None
+
+    @_on_owner
+    def get_recent_context(
+        self,
+        conversation_id: str,
+        before_position: int | None,
+        limit_turns: int = 8,
+    ) -> tuple[list[ContextRecord], int | None]:
+        messages, cursor = self.get_recent_messages(
+            conversation_id, before_position, limit_turns
+        )
+        if not messages:
+            return [], cursor
+        by_turn: dict[str, list[Message]] = {}
+        for message in messages:
+            by_turn.setdefault(message.turn_id, []).append(message)
+        result: list[ContextRecord] = []
+        for turn_id, group in by_turn.items():
+            result.extend(m for m in group if m.role == "user")
+            for invocation in self.get_invocations(turn_id):
+                result.append(
+                    ToolContextRecord(
+                        invocation.id,
+                        turn_id,
+                        conversation_id,
+                        invocation.model_call_id,
+                        invocation.name,
+                        invocation.arguments_json,
+                        "assistant_tool_call",
+                    )
+                )
+                content = invocation.result_json or json.dumps(
+                    {"status": invocation.status.value}, separators=(",", ":")
+                )
+                result.append(
+                    ToolContextRecord(
+                        invocation.id,
+                        turn_id,
+                        conversation_id,
+                        invocation.model_call_id,
+                        invocation.name,
+                        content,
+                        "tool",
+                    )
+                )
+            result.extend(m for m in group if m.role == "assistant")
+        return result, cursor
+
+    @_on_owner
+    def record_tool_proposal(
+        self,
+        turn_id: str,
+        model_call_id: str,
+        name: str,
+        version: int,
+        arguments_json: str,
+        arguments_sha256: str,
+        policy_version: str,
+        target_identity: str,
+        decision: str,
+    ) -> ToolInvocation:
+        if decision not in {"allow", "approval", "deny"}:
+            raise ValueError("Invalid tool policy decision")
+        with self._transaction():
+            turn = self._conn.execute(
+                "SELECT * FROM turns WHERE id=?", (turn_id,)
+            ).fetchone()
+            if turn is None or turn["status"] != "pending":
+                raise StaleTurnError("Turn is no longer pending")
+            previous = self._conn.execute(
+                "SELECT * FROM tool_invocations WHERE turn_id=? AND model_call_id=?",
+                (turn_id, model_call_id),
+            ).fetchone()
+            if previous is not None:
+                record = self._invocation(previous)
+                if (
+                    record.name != name
+                    or record.arguments_sha256 != arguments_sha256
+                    or record.version != version
+                ):
+                    raise ValueError("Tool call ID was reused with different arguments")
+                return record
+            ordinal = self._conn.execute(
+                "SELECT COALESCE(MAX(ordinal), 0) + 1 FROM tool_invocations WHERE turn_id=?",
+                (turn_id,),
+            ).fetchone()[0]
+            if ordinal > 4:
+                raise ValueError("Tool call limit exceeded")
+            invocation_id = str(uuid4())
+            status = (
+                "waiting_approval"
+                if decision == "approval"
+                else ("denied" if decision == "deny" else "proposed")
+            )
+            self._conn.execute(
+                "INSERT INTO tool_invocations (id, turn_id, conversation_id, ordinal, "
+                "model_call_id, name, version, arguments_json, arguments_sha256, "
+                "policy_version, target_identity, status, decision, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    invocation_id,
+                    turn_id,
+                    turn["conversation_id"],
+                    ordinal,
+                    model_call_id,
+                    name,
+                    version,
+                    arguments_json,
+                    arguments_sha256,
+                    policy_version,
+                    target_identity,
+                    status,
+                    decision,
+                    _now(),
+                ),
+            )
+        return self.get_invocation(invocation_id)
+
+    @_on_owner
+    def issue_tool_approval(self, invocation_id: str, expires_at: str) -> Approval:
+        with self._transaction():
+            existing = self._conn.execute(
+                "SELECT * FROM tool_approvals WHERE invocation_id=?", (invocation_id,)
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["status"] == "issued"
+                    and existing["session_id"] == self.session_id
+                ):
+                    return self._approval(existing)
+                raise StaleTurnError("Tool approval cannot be renewed")
+            row = self._conn.execute(
+                "SELECT * FROM tool_invocations WHERE id=?", (invocation_id,)
+            ).fetchone()
+            if row is None or row["status"] != "waiting_approval":
+                raise StaleTurnError("Tool invocation is not awaiting approval")
+            approval_id = str(uuid4())
+            self._conn.execute(
+                "INSERT INTO tool_approvals (id, invocation_id, turn_id, "
+                "arguments_sha256, tool_version, target_identity, policy_version, "
+                "session_id, expires_at, status, issued_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', ?)",
+                (
+                    approval_id,
+                    invocation_id,
+                    row["turn_id"],
+                    row["arguments_sha256"],
+                    row["version"],
+                    row["target_identity"],
+                    row["policy_version"],
+                    self.session_id,
+                    expires_at,
+                    _now(),
+                ),
+            )
+        return Approval(
+            approval_id,
+            row["turn_id"],
+            invocation_id,
+            row["arguments_sha256"],
+            row["version"],
+            row["target_identity"],
+            row["policy_version"],
+            self.session_id,
+            expires_at,
+            "issued",
+        )
+
+    @staticmethod
+    def _approval(row: sqlite3.Row) -> Approval:
+        return Approval(
+            row["id"],
+            row["turn_id"],
+            row["invocation_id"],
+            row["arguments_sha256"],
+            row["tool_version"],
+            row["target_identity"],
+            row["policy_version"],
+            row["session_id"],
+            row["expires_at"],
+            row["status"],
+        )
+
+    @_on_owner
+    def get_tool_approval(self, invocation_id: str) -> Approval | None:
+        row = self._conn.execute(
+            "SELECT * FROM tool_approvals WHERE invocation_id=?", (invocation_id,)
+        ).fetchone()
+        return self._approval(row) if row is not None else None
+
+    @_on_owner
+    def record_tool_intent(
+        self,
+        invocation_id: str,
+        policy_version: str,
+        target_identity: str,
+        approval_id: str | None = None,
+    ) -> ToolInvocation:
+        with self._transaction():
+            row = self._conn.execute(
+                "SELECT i.*, t.status AS turn_status FROM tool_invocations i "
+                "JOIN turns t ON t.id=i.turn_id WHERE i.id=?",
+                (invocation_id,),
+            ).fetchone()
+            if row is None or row["turn_status"] != "pending":
+                raise StaleTurnError("Tool turn is not pending")
+            if (
+                row["policy_version"] != policy_version
+                or row["target_identity"] != target_identity
+            ):
+                raise StaleTurnError("Tool policy or target changed")
+            if row["decision"] == "allow":
+                if row["status"] != "proposed" or approval_id is not None:
+                    raise StaleTurnError("Tool invocation already started")
+            elif row["decision"] == "approval":
+                approval = self._conn.execute(
+                    "SELECT * FROM tool_approvals WHERE id=? AND invocation_id=?",
+                    (approval_id, invocation_id),
+                ).fetchone()
+                if (
+                    row["status"] != "waiting_approval"
+                    or approval is None
+                    or approval["status"] != "issued"
+                    or approval["session_id"] != self.session_id
+                    or approval["expires_at"] <= _now()
+                    or approval["arguments_sha256"] != row["arguments_sha256"]
+                    or approval["tool_version"] != row["version"]
+                    or approval["target_identity"] != target_identity
+                    or approval["policy_version"] != policy_version
+                    or approval["turn_id"] != row["turn_id"]
+                ):
+                    raise StaleTurnError("Tool approval is absent, stale, or consumed")
+                self._conn.execute(
+                    "UPDATE tool_approvals SET status='consumed', consumed_at=? WHERE id=?",
+                    (_now(), approval_id),
+                )
+            else:
+                raise StaleTurnError("Denied tool cannot execute")
+            updated = self._conn.execute(
+                "UPDATE tool_invocations SET status='intent' WHERE id=? AND status=?",
+                (invocation_id, row["status"]),
+            )
+            if updated.rowcount != 1:
+                raise StaleTurnError("Tool invocation changed before intent")
+        return self.get_invocation(invocation_id)
+
+    @_on_owner
+    def get_invocation(self, invocation_id: str) -> ToolInvocation:
+        row = self._conn.execute(
+            "SELECT * FROM tool_invocations WHERE id=?", (invocation_id,)
+        ).fetchone()
+        if row is None:
+            raise StaleTurnError("Tool invocation does not exist")
+        return self._invocation(row)
+
+    @_on_owner
+    def commit_tool_result(
+        self,
+        invocation_id: str,
+        receipt_json: str,
+        result_json: str,
+    ) -> ToolInvocation:
+        with self._transaction():
+            changed = self._conn.execute(
+                "UPDATE tool_invocations SET status='complete', receipt_json=?, "
+                "result_json=?, completed_at=? WHERE id=? AND status='intent'",
+                (receipt_json, result_json, _now(), invocation_id),
+            )
+            if changed.rowcount != 1:
+                raise StaleTurnError("Tool invocation is not executing")
+        return self.get_invocation(invocation_id)
+
+    @_on_owner
+    def mark_tool_unknown(self, invocation_id: str) -> ToolInvocation:
+        with self._transaction():
+            changed = self._conn.execute(
+                "UPDATE tool_invocations SET status='outcome_unknown' "
+                "WHERE id=? AND status='intent'",
+                (invocation_id,),
+            )
+            if changed.rowcount != 1:
+                raise StaleTurnError("Tool execution intent is not active")
+        return self.get_invocation(invocation_id)
+
     @_on_owner
     def get_answer(self, turn_id: str) -> Message | None:
         row = self._conn.execute(
@@ -389,8 +742,10 @@ class SqliteStore:
                     )
                 return self._turn(prior), False
             active = self._conn.execute(
-                "SELECT 1 FROM turns WHERE conversation_id=? AND status='pending'",
-                (conversation_id,),
+                "SELECT 1 FROM turns WHERE conversation_id=? AND status='pending' "
+                "UNION SELECT 1 FROM tool_invocations WHERE conversation_id=? "
+                "AND status IN ('intent', 'outcome_unknown')",
+                (conversation_id, conversation_id),
             ).fetchone()
             if active is not None:
                 raise ActiveTurnError("This conversation already has an active turn")
@@ -450,6 +805,13 @@ class SqliteStore:
             ).fetchone()
             if turn is None or turn["status"] != TurnStatus.PENDING.value:
                 raise StaleTurnError("Turn is no longer pending")
+            unresolved = self._conn.execute(
+                "SELECT 1 FROM tool_invocations WHERE turn_id=? "
+                "AND status NOT IN ('complete', 'denied', 'cancelled') LIMIT 1",
+                (turn_id,),
+            ).fetchone()
+            if unresolved is not None:
+                raise StaleTurnError("Tool invocation is unresolved")
             message_position = self._conn.execute(
                 "SELECT COALESCE(MAX(position), 0) + 1 FROM messages WHERE conversation_id=?",
                 (turn["conversation_id"],),
@@ -489,6 +851,16 @@ class SqliteStore:
                 raise StaleTurnError("Turn changed before failure was recorded")
             self._conn.execute(
                 "UPDATE turn_drafts SET status='interrupted' WHERE turn_id=?",
+                (turn_id,),
+            )
+            self._conn.execute(
+                "UPDATE tool_invocations SET status='cancelled' WHERE turn_id=? "
+                "AND status IN ('proposed', 'waiting_approval')",
+                (turn_id,),
+            )
+            self._conn.execute(
+                "UPDATE tool_approvals SET status='invalidated' WHERE turn_id=? "
+                "AND status='issued'",
                 (turn_id,),
             )
         row = self._conn.execute(

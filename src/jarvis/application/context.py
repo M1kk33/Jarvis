@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Protocol
 
+from jarvis.domain.tools import ContextRecord
 from jarvis.domain.types import Message, RequestFailure
 
 
@@ -119,4 +120,26 @@ class ContextBuilder:
             [ContextItem(m.role, m.text, m.turn_id) for m in messages],
             instructions=instructions,
             required_group=messages[-1].turn_id,
+        )
+
+    def from_records(
+        self,
+        records: list[ContextRecord],
+        *,
+        instructions: str,
+        tool_schemas: tuple[str, ...],
+    ) -> ContextSelection:
+        if not records or not any(
+            record.turn_id == records[-1].turn_id and record.role == "user"
+            for record in records
+        ):
+            raise RequestFailure("invalid_request", "Current user input is missing")
+        return self.build(
+            [
+                ContextItem(record.role, record.text, record.turn_id)
+                for record in records
+            ],
+            instructions=instructions,
+            required_group=records[-1].turn_id,
+            tool_schemas=tool_schemas,
         )

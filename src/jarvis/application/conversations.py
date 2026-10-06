@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
@@ -11,12 +12,19 @@ from uuid import uuid4
 
 from jarvis.application.context import ContextBuilder
 from jarvis.application.resource_manager import ResourceManager, _settle
-from jarvis.domain.ports import ChatProvider, ConversationStore, ExactTokenCounter
+from jarvis.application.tools import ToolService
+from jarvis.domain.ports import (
+    ChatProvider,
+    ConversationStore,
+    ExactTokenCounter,
+    ToolChatProvider,
+)
 from jarvis.domain.resources import (
     AdmissionDenied,
     ResourceUnavailable,
     RuntimeProfile,
 )
+from jarvis.domain.tools import ContextRecord, InvocationStatus, ToolInvocation
 from jarvis.domain.types import (
     NORMALIZED_ERROR_CODES,
     Conversation,
@@ -29,6 +37,7 @@ from jarvis.domain.types import (
     StorageFailure,
     StreamDelta,
     StreamTerminal,
+    StreamToolCall,
     Turn,
     TurnStatus,
 )
@@ -61,6 +70,7 @@ class ConversationService:
         diagnostics: Callable[[str, dict[str, str | int]], None] | None = None,
         resource_manager: ResourceManager | None = None,
         runtime_profile: RuntimeProfile | None = None,
+        tool_service: ToolService | None = None,
     ) -> None:
         self.store = store
         self.provider = provider
@@ -71,6 +81,9 @@ class ConversationService:
             raise ValueError("Runtime manager and profile must be configured together")
         self.resource_manager = resource_manager
         self.runtime_profile = runtime_profile
+        if tool_service is not None and not isinstance(provider, ToolChatProvider):
+            raise ValueError("Tool-enabled chat requires a tool-capable provider")
+        self.tool_service = tool_service
 
     def create(self, title: str) -> Conversation:
         return self.store.create_conversation(title)
@@ -90,10 +103,76 @@ class ConversationService:
     def get_draft(self, turn_id: str) -> Draft | None:
         return self.store.get_draft(turn_id)
 
+    def get_invocations(self, turn_id: str) -> list[ToolInvocation]:
+        return self.store.get_invocations(turn_id)
+
     def send(
         self, conversation_id: str, text: str, submission_id: str | None = None
     ) -> SendResult:
         return asyncio.run(self.send_async(conversation_id, text, submission_id))
+
+    async def continue_turn_async(
+        self,
+        turn_id: str,
+        *,
+        on_delta: Callable[[str], Awaitable[None]] | None = None,
+    ) -> SendResult:
+        """Resume only an in-process approved M5 turn, never a duplicate submit."""
+        if self.tool_service is None:
+            raise RequestFailure("unsupported_capability", "Tools are unavailable")
+        turn = await self.store.run(lambda: self.store.get_turn(turn_id))
+        if turn.status is not TurnStatus.PENDING:
+            raise RequestFailure("invalid_request", "Turn is not pending")
+        invocations = await self.store.run(lambda: self.store.get_invocations(turn_id))
+        if not any(item.decision == "approval" for item in invocations) or any(
+            item.status is not InvocationStatus.COMPLETE for item in invocations
+        ):
+            raise RequestFailure(
+                "invalid_request", "Tool approval or outcome is unresolved"
+            )
+        signal = Event()
+        phase = "generation"
+        try:
+            answer_text = await self._run_tool_loop(
+                turn_id, turn.conversation_id, signal, on_delta
+            )
+            if answer_text is None:
+                return SendResult(
+                    await self.store.run(lambda: self.store.get_turn(turn_id)),
+                    None,
+                    duplicate=False,
+                )
+            phase = "completion"
+            answer = await self.store.run(
+                lambda: self.store.complete_turn(turn_id, answer_text)
+            )
+            settled = await self.store.run(lambda: self.store.get_turn(turn_id))
+            return SendResult(settled, answer, duplicate=False)
+        except asyncio.CancelledError:
+            signal.set()
+            current = await self.store.run(lambda: self.store.get_turn(turn_id))
+            if current.status is TurnStatus.COMPLETE:
+                committed_answer = await self.store.run(
+                    lambda: self.store.get_answer(turn_id)
+                )
+                return SendResult(current, committed_answer, duplicate=False)
+            if current.status is TurnStatus.PENDING:
+                await self.store.run(lambda: self.store.interrupt_turn(turn_id))
+            raise RequestFailure("cancelled", "Chat request was cancelled") from None
+        except Exception as exc:
+            if phase == "generation" and not isinstance(exc, StorageFailure):
+                code = _error_code(exc)
+                if code == "cancelled":
+                    await self.store.run(lambda: self.store.interrupt_turn(turn_id))
+                else:
+                    await self.store.run(lambda: self.store.fail_turn(turn_id, code))
+            if isinstance(exc, ConversationError):
+                raise
+            if phase != "generation":
+                raise
+            raise ProviderFailure(
+                _error_code(exc), "Approved tool continuation failed"
+            ) from exc
 
     async def send_async(
         self,
@@ -120,45 +199,18 @@ class ConversationService:
                 )
                 return SendResult(active_turn, answer, duplicate=True)
             phase = "generation"
-            messages: list[Message] = []
-            cursor: int | None = None
-            while True:
-                page, cursor = await self.store.run(
-                    partial(self.store.get_recent_messages, conversation_id, cursor)
+            if self.tool_service is not None:
+                answer_text = await self._run_tool_loop(
+                    active_turn.id, conversation_id, signal, on_delta
                 )
-                if not page:
-                    break
-                messages = page + messages
-                selection = self.context.from_messages(
-                    messages, instructions=self.instructions
-                )
-                if len(selection.items) < len(messages):
-                    break
-            selection = self.context.from_messages(
-                messages, instructions=self.instructions
-            )
-            selected_groups = {item.group_id for item in selection.items}
-            selected = [m for m in messages if m.turn_id in selected_groups]
-            if self.resource_manager is not None:
-                assert self.runtime_profile is not None
-                handle = await self.resource_manager.acquire(self.runtime_profile)
-                try:
-                    if isinstance(self.provider, ExactTokenCounter):
-                        selected = await self._fit_exact_context(selected)
-                    answer_text = await self._consume_stream(
-                        active_turn.id, selected, signal, on_delta
+                if answer_text is None:
+                    settled = await self.store.run(
+                        lambda: self.store.get_turn(active_turn.id)
                     )
-                except BaseException:
-                    signal.set()
-                    await _settle(
-                        asyncio.create_task(self.resource_manager.abort_request(handle))
-                    )
-                    raise
-                finally:
-                    await handle.release()
+                    return SendResult(settled, None, duplicate=False)
             else:
-                answer_text = await self._consume_stream(
-                    active_turn.id, selected, signal, on_delta
+                answer_text = await self._single_reply(
+                    active_turn.id, conversation_id, signal, on_delta
                 )
             phase = "completion"
             answer = await self.store.run(
@@ -208,6 +260,251 @@ class ConversationService:
                 _error_code(exc),
                 f"Chat request failed ({_error_code(exc)}); the input remains stored",
             ) from exc
+
+    async def _single_reply(
+        self,
+        turn_id: str,
+        conversation_id: str,
+        signal: Event,
+        on_delta: Callable[[str], Awaitable[None]] | None,
+    ) -> str:
+        messages: list[Message] = []
+        cursor: int | None = None
+        while True:
+            page, cursor = await self.store.run(
+                partial(self.store.get_recent_messages, conversation_id, cursor)
+            )
+            if not page:
+                break
+            messages = page + messages
+            selection = self.context.from_messages(
+                messages, instructions=self.instructions
+            )
+            if len(selection.items) < len(messages):
+                break
+        selection = self.context.from_messages(messages, instructions=self.instructions)
+        selected_groups = {item.group_id for item in selection.items}
+        selected = [m for m in messages if m.turn_id in selected_groups]
+        if self.resource_manager is not None:
+            assert self.runtime_profile is not None
+            handle = await self.resource_manager.acquire(self.runtime_profile)
+            try:
+                if isinstance(self.provider, ExactTokenCounter):
+                    selected = await self._fit_exact_context(selected)
+                answer_text = await self._consume_stream(
+                    turn_id, selected, signal, on_delta
+                )
+            except BaseException:
+                signal.set()
+                await _settle(
+                    asyncio.create_task(self.resource_manager.abort_request(handle))
+                )
+                raise
+            finally:
+                await handle.release()
+        else:
+            answer_text = await self._consume_stream(
+                turn_id, selected, signal, on_delta
+            )
+        return answer_text
+
+    async def _run_tool_loop(
+        self,
+        turn_id: str,
+        conversation_id: str,
+        signal: Event,
+        on_delta: Callable[[str], Awaitable[None]] | None,
+    ) -> str | None:
+        assert self.tool_service is not None
+        assert isinstance(self.provider, ToolChatProvider)
+        schemas = self.tool_service.schemas()
+        schema_text = tuple(json.dumps(item, sort_keys=True) for item in schemas)
+        proposals = len(
+            await self.store.run(lambda: self.store.get_invocations(turn_id))
+        )
+        handle = None
+        if self.resource_manager is not None:
+            assert self.runtime_profile is not None
+            handle = await self.resource_manager.acquire(self.runtime_profile)
+        try:
+            while True:
+                records: list[ContextRecord] = []
+                cursor: int | None = None
+                while True:
+                    page, cursor = await self.tool_service.store.run(
+                        partial(
+                            self.tool_service.store.get_recent_context,
+                            conversation_id,
+                            cursor,
+                        )
+                    )
+                    if not page:
+                        break
+                    records = page + records
+                    selection = self.context.from_records(
+                        records,
+                        instructions=self.instructions,
+                        tool_schemas=schema_text,
+                    )
+                    if len(selection.items) < len(records):
+                        break
+                selection = self.context.from_records(
+                    records,
+                    instructions=self.instructions,
+                    tool_schemas=schema_text,
+                )
+                selected_groups = {item.group_id for item in selection.items}
+                selected = [r for r in records if r.turn_id in selected_groups]
+                selected = await self._fit_exact_tool_context(selected, schemas)
+                text, proposal = await self._consume_tool_stream(
+                    turn_id,
+                    selected,
+                    schemas,
+                    signal,
+                    on_delta,
+                )
+                if proposal is None:
+                    assert text is not None
+                    return text
+                proposals += 1
+                if proposals > 4:
+                    raise RequestFailure("invalid_request", "Tool call limit exceeded")
+                invocation = await self.tool_service.propose_and_run(turn_id, proposal)
+                if invocation.status is InvocationStatus.WAITING_APPROVAL:
+                    return None
+                if invocation.status is not InvocationStatus.COMPLETE:
+                    raise RequestFailure(
+                        "backend_crashed", "Tool result was not committed"
+                    )
+        except BaseException:
+            signal.set()
+            if handle is not None:
+                assert self.resource_manager is not None
+                await _settle(
+                    asyncio.create_task(self.resource_manager.abort_request(handle))
+                )
+            raise
+        finally:
+            if handle is not None:
+                await handle.release()
+
+    async def _fit_exact_tool_context(
+        self,
+        selected: list[ContextRecord],
+        schemas: list[dict[str, object]],
+    ) -> list[ContextRecord]:
+        assert isinstance(self.provider, ToolChatProvider)
+        limit = (
+            self.context.window
+            - self.context.output_allowance
+            - self.context.safety_margin
+        )
+        required_turn = selected[-1].turn_id
+        while True:
+            task = asyncio.create_task(
+                asyncio.to_thread(
+                    self.provider.count_prompt_tokens_with_tools,
+                    selected,
+                    self.instructions,
+                    schemas,
+                )
+            )
+            try:
+                count = await asyncio.shield(task)
+            except asyncio.CancelledError:
+                try:
+                    await _settle(task)
+                except Exception:  # noqa: BLE001, S110 - cleanup still follows
+                    pass
+                raise
+            if count <= limit:
+                return selected
+            oldest = selected[0].turn_id
+            if oldest == required_turn:
+                raise RequestFailure(
+                    "invalid_request", "Required tool exchange exceeds context budget"
+                )
+            selected = [record for record in selected if record.turn_id != oldest]
+
+    async def _consume_tool_stream(
+        self,
+        turn_id: str,
+        records: list[ContextRecord],
+        schemas: list[dict[str, object]],
+        cancel: Event,
+        on_delta: Callable[[str], Awaitable[None]] | None,
+    ) -> tuple[str | None, StreamToolCall | None]:
+        assert isinstance(self.provider, ToolChatProvider)
+        iterator = iter(
+            self.provider.stream_with_tools(records, cancel, self.instructions, schemas)
+        )
+        parts: list[str] = []
+        received = 0
+        proposal: StreamToolCall | None = None
+        terminal = False
+        last_checkpoint = time.monotonic()
+        since_checkpoint = 0
+        while True:
+            if cancel.is_set():
+                raise RequestFailure("cancelled", "Chat request was cancelled")
+            task = asyncio.create_task(asyncio.to_thread(next, iterator, None))
+            try:
+                event = await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancel.set()
+                try:
+                    await _settle(task)
+                except Exception:  # noqa: BLE001, S110 - cleanup still follows
+                    pass
+                raise
+            if event is None:
+                break
+            if isinstance(event, StreamTerminal):
+                if terminal or event.error_code is not None:
+                    raise RequestFailure(
+                        event.error_code or "backend_crashed", "Tool stream failed"
+                    )
+                terminal = True
+                continue
+            if terminal:
+                raise RequestFailure(
+                    "backend_crashed", "Stream continued after terminal"
+                )
+            if isinstance(event, StreamToolCall):
+                if proposal is not None or parts:
+                    raise RequestFailure(
+                        "backend_crashed", "Mixed or parallel tool stream"
+                    )
+                proposal = event
+                continue
+            if (
+                not isinstance(event, StreamDelta)
+                or not event.text
+                or proposal is not None
+            ):
+                raise RequestFailure("backend_crashed", "Malformed tool stream event")
+            size = len(event.text.encode("utf-8"))
+            if size > 4096 - received:
+                raise RequestFailure("invalid_request", "Reply exceeds byte limit")
+            received += size
+            parts.append(event.text)
+            since_checkpoint += size
+            now = time.monotonic()
+            if (
+                len(parts) == 1
+                or since_checkpoint >= 2048
+                or now - last_checkpoint >= 1
+            ):
+                await self.store.run(
+                    partial(self.store.checkpoint_draft, turn_id, "".join(parts))
+                )
+                since_checkpoint = 0
+                last_checkpoint = now
+            if on_delta is not None:
+                await on_delta(event.text)
+        if not terminal or (proposal is None and not parts):
+            raise RequestFailure("backend_crashed", "Tool stream ended incomplete")
+        return ("".join(parts) if parts else None), proposal
 
     async def _fit_exact_context(self, selected: list[Message]) -> list[Message]:
         assert isinstance(self.provider, ExactTokenCounter)
