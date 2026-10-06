@@ -338,6 +338,22 @@ class ResourceManager:
             self._condition.notify_all()
             return True
 
+    async def verify_previous_worker(self) -> bool:
+        """Verify crash-era ownership before settling a persisted cancellation."""
+        if self._state is ResourceState.UNAVAILABLE:
+            return await self.recover()
+        async with self._condition:
+            if self._state is not ResourceState.STOPPED:
+                return self._state is ResourceState.READY
+            abandoned = await self.ownership.acquire()
+            try:
+                verified = await self.ownership.verify_previous(abandoned)
+                if verified:
+                    await self.ownership.clear()
+                return verified
+            finally:
+                await self.ownership.release()
+
     async def abort_request(self, handle: OperationHandle) -> None:
         """Dispose a runtime after an unverified or cancelled inference request."""
         async with self._condition:

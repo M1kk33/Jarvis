@@ -8,14 +8,15 @@ import sqlite3
 import threading
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
-from datetime import UTC, datetime
+from contextlib import closing, contextmanager
+from datetime import UTC, datetime, timedelta
 from functools import wraps
 from importlib import resources
 from pathlib import Path
 from typing import Self, TypeVar
 from uuid import uuid4
 
+from jarvis.domain.jobs import TERMINAL_JOBS, Job, JobStatus, JobStep
 from jarvis.domain.tools import (
     Approval,
     ContextRecord,
@@ -36,6 +37,7 @@ from jarvis.domain.types import (
     Turn,
     TurnStatus,
 )
+from jarvis.infrastructure.artifacts import verify_artifact
 
 T = TypeVar("T")
 
@@ -135,6 +137,52 @@ class SqliteStore:
             self._conn.execute(
                 "UPDATE turn_drafts SET status='interrupted' WHERE status='draft'"
             )
+            self._conn.execute(
+                "UPDATE jobs SET status='interrupted', progress='restart_interrupted', "
+                "updated_at=? WHERE status='running'",
+                (_now(),),
+            )
+            self._conn.execute(
+                "UPDATE job_steps SET status='interrupted', updated_at=? "
+                "WHERE status='running' AND invocation_id IS NULL",
+                (_now(),),
+            )
+            self._conn.execute(
+                "UPDATE job_steps SET status='outcome_unknown', updated_at=? "
+                "WHERE invocation_id IN (SELECT id FROM tool_invocations "
+                "WHERE status='outcome_unknown')",
+                (_now(),),
+            )
+            self._conn.execute(
+                "UPDATE job_steps SET status='cancelled', updated_at=? "
+                "WHERE invocation_id IN (SELECT id FROM tool_invocations "
+                "WHERE status='cancelled') AND status IN ('queued', 'waiting_approval')",
+                (_now(),),
+            )
+            self._conn.execute(
+                "UPDATE jobs SET status='cancelled', progress='cancelled_after_restart', "
+                "updated_at=? WHERE status='cancel_requested' AND cancel_requested=1 "
+                "AND profile_name='fake'",
+                (_now(),),
+            )
+        for artifact in self._conn.execute(
+            "SELECT id, relative_path, size_bytes, sha256 FROM artifacts "
+            "WHERE status='available'"
+        ).fetchall():
+            try:
+                verify_artifact(
+                    self.data_dir,
+                    artifact["relative_path"],
+                    artifact["size_bytes"],
+                    artifact["sha256"],
+                )
+            except (OSError, ValueError):
+                with self._transaction():
+                    self._conn.execute(
+                        "UPDATE artifacts SET status='unavailable' "
+                        "WHERE id=? AND status='available'",
+                        (artifact["id"],),
+                    )
 
     def _close_connection(self) -> None:
         if hasattr(self, "_conn"):
@@ -172,6 +220,7 @@ class SqliteStore:
             (1, "001_initial.sql"),
             (2, "002_drafts.sql"),
             (3, "003_tools.sql"),
+            (4, "004_jobs.sql"),
         ):
             script = (
                 resources.files("jarvis")
@@ -234,13 +283,22 @@ class SqliteStore:
         return self._turn(row)
 
     @_on_owner
-    def checkpoint_draft(self, turn_id: str, text: str) -> None:
+    def checkpoint_draft(
+        self, turn_id: str, text: str, expected_job_attempt: int | None = None
+    ) -> None:
         with self._transaction():
             row = self._conn.execute(
                 "SELECT status FROM turns WHERE id=?", (turn_id,)
             ).fetchone()
             if row is None or row["status"] != "pending":
                 raise StaleTurnError("Turn is no longer pending")
+            job = self._conn.execute(
+                "SELECT attempt, status FROM jobs WHERE turn_id=?", (turn_id,)
+            ).fetchone()
+            if job is not None and (
+                job["attempt"] != expected_job_attempt or job["status"] != "running"
+            ):
+                raise StaleTurnError("Stale job draft attempt")
             self._conn.execute(
                 "INSERT INTO turn_drafts (turn_id, text, status, checkpointed_at) "
                 "VALUES (?, ?, 'draft', ?) ON CONFLICT(turn_id) DO UPDATE SET "
@@ -256,8 +314,18 @@ class SqliteStore:
         return Draft(row["turn_id"], row["text"], row["status"]) if row else None
 
     @_on_owner
-    def interrupt_turn(self, turn_id: str, code: str = "cancelled") -> Turn:
+    def interrupt_turn(
+        self,
+        turn_id: str,
+        code: str = "cancelled",
+        expected_job_attempt: int | None = None,
+    ) -> Turn:
         with self._transaction():
+            job = self._conn.execute(
+                "SELECT attempt FROM jobs WHERE turn_id=?", (turn_id,)
+            ).fetchone()
+            if job is not None and job["attempt"] != expected_job_attempt:
+                raise StaleTurnError("Stale job interruption attempt")
             self._conn.execute(
                 "UPDATE turns SET status='interrupted', error_code=? WHERE id=? AND status='pending'",
                 (code, turn_id),
@@ -275,6 +343,17 @@ class SqliteStore:
                 "UPDATE tool_approvals SET status='invalidated' WHERE turn_id=? "
                 "AND status='issued'",
                 (turn_id,),
+            )
+            self._conn.execute(
+                "UPDATE jobs SET status='interrupted', progress='interrupted', "
+                "error_code=?, updated_at=? WHERE turn_id=? AND status='running'",
+                (code, _now(), turn_id),
+            )
+            self._conn.execute(
+                "UPDATE job_steps SET status='interrupted', updated_at=? "
+                "WHERE job_id=(SELECT id FROM jobs WHERE turn_id=?) "
+                "AND kind='chat' AND status='running'",
+                (_now(), turn_id),
             )
         return self.get_turn(turn_id)
 
@@ -407,6 +486,8 @@ class SqliteStore:
             row["decision"],
             row["result_json"],
             row["receipt_json"],
+            row["job_id"],
+            row["job_attempt"],
         )
 
     @_on_owner
@@ -486,6 +567,7 @@ class SqliteStore:
         policy_version: str,
         target_identity: str,
         decision: str,
+        expected_job_attempt: int | None = None,
     ) -> ToolInvocation:
         if decision not in {"allow", "approval", "deny"}:
             raise ValueError("Invalid tool policy decision")
@@ -495,6 +577,15 @@ class SqliteStore:
             ).fetchone()
             if turn is None or turn["status"] != "pending":
                 raise StaleTurnError("Turn is no longer pending")
+            job = self._conn.execute(
+                "SELECT * FROM jobs WHERE turn_id=?", (turn_id,)
+            ).fetchone()
+            if job is not None and (
+                job["status"] != "running"
+                or job["cancel_requested"]
+                or job["attempt"] != expected_job_attempt
+            ):
+                raise StaleTurnError("Job cannot propose a tool")
             previous = self._conn.execute(
                 "SELECT * FROM tool_invocations WHERE turn_id=? AND model_call_id=?",
                 (turn_id, model_call_id),
@@ -523,8 +614,8 @@ class SqliteStore:
             self._conn.execute(
                 "INSERT INTO tool_invocations (id, turn_id, conversation_id, ordinal, "
                 "model_call_id, name, version, arguments_json, arguments_sha256, "
-                "policy_version, target_identity, status, decision, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "policy_version, target_identity, status, decision, created_at, job_id, job_attempt) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     invocation_id,
                     turn_id,
@@ -540,8 +631,25 @@ class SqliteStore:
                     status,
                     decision,
                     _now(),
+                    job["id"] if job is not None else None,
+                    job["attempt"] if job is not None else None,
                 ),
             )
+            if job is not None:
+                self._conn.execute(
+                    "INSERT INTO job_steps (id, job_id, ordinal, kind, invocation_id, "
+                    "status, attempt, created_at, updated_at) "
+                    "VALUES (?, ?, ?, 'tool', ?, ?, 0, ?, ?)",
+                    (
+                        f"{job['id']}:tool:{ordinal}",
+                        job["id"],
+                        ordinal,
+                        invocation_id,
+                        "queued" if status == "proposed" else status,
+                        _now(),
+                        _now(),
+                    ),
+                )
         return self.get_invocation(invocation_id)
 
     @_on_owner
@@ -562,12 +670,24 @@ class SqliteStore:
             ).fetchone()
             if row is None or row["status"] != "waiting_approval":
                 raise StaleTurnError("Tool invocation is not awaiting approval")
+            if row["job_id"] is not None:
+                job = self._conn.execute(
+                    "SELECT status, cancel_requested, attempt FROM jobs WHERE id=?",
+                    (row["job_id"],),
+                ).fetchone()
+                if (
+                    job is None
+                    or job["status"] not in ("waiting_approval", "running")
+                    or job["cancel_requested"]
+                    or job["attempt"] != row["job_attempt"]
+                ):
+                    raise StaleTurnError("Job approval is no longer eligible")
             approval_id = str(uuid4())
             self._conn.execute(
                 "INSERT INTO tool_approvals (id, invocation_id, turn_id, "
                 "arguments_sha256, tool_version, target_identity, policy_version, "
-                "session_id, expires_at, status, issued_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', ?)",
+                "session_id, expires_at, status, issued_at, job_id, job_attempt) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?, ?)",
                 (
                     approval_id,
                     invocation_id,
@@ -579,6 +699,8 @@ class SqliteStore:
                     self.session_id,
                     expires_at,
                     _now(),
+                    row["job_id"],
+                    row["job_attempt"],
                 ),
             )
         return Approval(
@@ -592,6 +714,8 @@ class SqliteStore:
             self.session_id,
             expires_at,
             "issued",
+            row["job_id"],
+            row["job_attempt"],
         )
 
     @staticmethod
@@ -607,6 +731,8 @@ class SqliteStore:
             row["session_id"],
             row["expires_at"],
             row["status"],
+            row["job_id"],
+            row["job_attempt"],
         )
 
     @_on_owner
@@ -632,6 +758,18 @@ class SqliteStore:
             ).fetchone()
             if row is None or row["turn_status"] != "pending":
                 raise StaleTurnError("Tool turn is not pending")
+            if row["job_id"] is not None:
+                job = self._conn.execute(
+                    "SELECT status, cancel_requested, attempt FROM jobs WHERE id=?",
+                    (row["job_id"],),
+                ).fetchone()
+                if (
+                    job is None
+                    or job["status"] not in ("running", "waiting_approval")
+                    or job["cancel_requested"]
+                    or job["attempt"] != row["job_attempt"]
+                ):
+                    raise StaleTurnError("Tool job cannot execute")
             if (
                 row["policy_version"] != policy_version
                 or row["target_identity"] != target_identity
@@ -656,6 +794,8 @@ class SqliteStore:
                     or approval["target_identity"] != target_identity
                     or approval["policy_version"] != policy_version
                     or approval["turn_id"] != row["turn_id"]
+                    or approval["job_id"] != row["job_id"]
+                    or approval["job_attempt"] != row["job_attempt"]
                 ):
                     raise StaleTurnError("Tool approval is absent, stale, or consumed")
                 self._conn.execute(
@@ -670,6 +810,18 @@ class SqliteStore:
             )
             if updated.rowcount != 1:
                 raise StaleTurnError("Tool invocation changed before intent")
+            if row["job_id"] is not None:
+                self._conn.execute(
+                    "UPDATE job_steps SET status='running', attempt=attempt+1, "
+                    "updated_at=? WHERE invocation_id=? AND status IN "
+                    "('queued', 'waiting_approval')",
+                    (_now(), invocation_id),
+                )
+                self._conn.execute(
+                    "UPDATE jobs SET status='running', progress='tool_running', "
+                    "updated_at=? WHERE id=? AND status='waiting_approval'",
+                    (_now(), row["job_id"]),
+                )
         return self.get_invocation(invocation_id)
 
     @_on_owner
@@ -680,6 +832,25 @@ class SqliteStore:
         if row is None:
             raise StaleTurnError("Tool invocation does not exist")
         return self._invocation(row)
+
+    @_on_owner
+    def assert_tool_intent_active(self, invocation_id: str) -> None:
+        row = self._conn.execute(
+            "SELECT i.status, i.job_id, i.job_attempt, t.status AS turn_status, "
+            "j.status AS job_status, j.attempt AS active_attempt, "
+            "j.cancel_requested FROM tool_invocations i "
+            "JOIN turns t ON t.id=i.turn_id "
+            "LEFT JOIN jobs j ON j.id=i.job_id WHERE i.id=?",
+            (invocation_id,),
+        ).fetchone()
+        if row is None or row["status"] != "intent" or row["turn_status"] != "pending":
+            raise StaleTurnError("Tool intent is no longer active")
+        if row["job_id"] is not None and (
+            row["job_status"] != "running"
+            or row["cancel_requested"]
+            or row["job_attempt"] != row["active_attempt"]
+        ):
+            raise StaleTurnError("Tool job was cancelled or superseded")
 
     @_on_owner
     def commit_tool_result(
@@ -696,6 +867,22 @@ class SqliteStore:
             )
             if changed.rowcount != 1:
                 raise StaleTurnError("Tool invocation is not executing")
+            row = self._conn.execute(
+                "SELECT job_id, ordinal FROM tool_invocations WHERE id=?",
+                (invocation_id,),
+            ).fetchone()
+            if row["job_id"] is not None:
+                self._conn.execute(
+                    "UPDATE job_steps SET status='complete', updated_at=? "
+                    "WHERE invocation_id=? AND status='running'",
+                    (_now(), invocation_id),
+                )
+                self._conn.execute(
+                    "UPDATE jobs SET next_step=?, progress='tool_complete', "
+                    "updated_at=? WHERE id=? AND status='running' "
+                    "AND cancel_requested=0",
+                    (row["ordinal"] + 1, _now(), row["job_id"]),
+                )
         return self.get_invocation(invocation_id)
 
     @_on_owner
@@ -708,6 +895,11 @@ class SqliteStore:
             )
             if changed.rowcount != 1:
                 raise StaleTurnError("Tool execution intent is not active")
+            self._conn.execute(
+                "UPDATE job_steps SET status='outcome_unknown', updated_at=? "
+                "WHERE invocation_id=? AND status='running'",
+                (_now(), invocation_id),
+            )
         return self.get_invocation(invocation_id)
 
     @_on_owner
@@ -719,9 +911,253 @@ class SqliteStore:
         ).fetchone()
         return self._message(row) if row is not None else None
 
+    @staticmethod
+    def _job(row: sqlite3.Row) -> Job:
+        return Job(
+            row["id"],
+            row["turn_id"],
+            row["conversation_id"],
+            row["profile_name"],
+            JobStatus(row["status"]),
+            row["next_step"],
+            row["attempt"],
+            row["deadline_at"],
+            row["progress"],
+            bool(row["cancel_requested"]),
+            row["error_code"],
+        )
+
+    @_on_owner
+    def get_job(self, job_id: str) -> Job:
+        row = self._conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if row is None:
+            raise StaleTurnError("Job does not exist")
+        return self._job(row)
+
+    @_on_owner
+    def get_job_by_turn(self, turn_id: str) -> Job | None:
+        row = self._conn.execute(
+            "SELECT * FROM jobs WHERE turn_id=?", (turn_id,)
+        ).fetchone()
+        return self._job(row) if row is not None else None
+
+    @_on_owner
+    def list_jobs(self, conversation_id: str | None = None) -> list[Job]:
+        if conversation_id is None:
+            rows = self._conn.execute(
+                "SELECT * FROM jobs ORDER BY created_at, id"
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM jobs WHERE conversation_id=? ORDER BY created_at, id",
+                (conversation_id,),
+            ).fetchall()
+        return [self._job(row) for row in rows]
+
+    @_on_owner
+    def recovery_counts(self) -> dict[str, int]:
+        return {
+            "unknown_invocations": self._conn.execute(
+                "SELECT COUNT(*) FROM tool_invocations WHERE status='outcome_unknown'"
+            ).fetchone()[0],
+            "unavailable_artifacts": self._conn.execute(
+                "SELECT COUNT(*) FROM artifacts WHERE status='unavailable'"
+            ).fetchone()[0],
+        }
+
+    @_on_owner
+    def get_job_steps(self, job_id: str) -> list[JobStep]:
+        rows = self._conn.execute(
+            "SELECT * FROM job_steps WHERE job_id=? ORDER BY ordinal, kind",
+            (job_id,),
+        ).fetchall()
+        return [
+            JobStep(
+                row["id"],
+                row["job_id"],
+                row["ordinal"],
+                row["kind"],
+                row["invocation_id"],
+                row["status"],
+                row["attempt"],
+            )
+            for row in rows
+        ]
+
+    @_on_owner
+    def backup_database(self, destination: Path) -> None:
+        """Use SQLite's online backup API; never copy the live WAL database."""
+        with closing(sqlite3.connect(destination)) as snapshot:
+            self._conn.backup(snapshot)
+
+    @_on_owner
+    def start_job(self, job_id: str) -> Job:
+        with self._transaction():
+            row = self._conn.execute(
+                "SELECT * FROM jobs WHERE id=?", (job_id,)
+            ).fetchone()
+            if (
+                row is None
+                or row["status"] not in ("queued", "interrupted", "waiting_approval")
+                or row["cancel_requested"]
+            ):
+                raise StaleTurnError("Job cannot start")
+            unknown = self._conn.execute(
+                "SELECT 1 FROM tool_invocations WHERE job_id=? "
+                "AND status IN ('intent', 'outcome_unknown') LIMIT 1",
+                (job_id,),
+            ).fetchone()
+            if unknown is not None:
+                raise StaleTurnError("Unknown tool outcome blocks job resume")
+            if row["attempt"] >= 3:
+                self._conn.execute(
+                    "UPDATE turns SET status='failed', error_code='timeout' "
+                    "WHERE id=? AND status IN ('pending', 'interrupted')",
+                    (row["turn_id"],),
+                )
+                self._conn.execute(
+                    "UPDATE tool_invocations SET status='cancelled' WHERE job_id=? "
+                    "AND status IN ('proposed', 'waiting_approval')",
+                    (job_id,),
+                )
+                self._conn.execute(
+                    "UPDATE tool_approvals SET status='invalidated' WHERE job_id=? "
+                    "AND status='issued'",
+                    (job_id,),
+                )
+                self._conn.execute(
+                    "UPDATE job_steps SET status='failed', updated_at=? "
+                    "WHERE job_id=? AND status IN ('queued', 'interrupted', 'waiting_approval')",
+                    (_now(), job_id),
+                )
+                self._conn.execute(
+                    "UPDATE jobs SET status='failed', error_code='timeout', "
+                    "progress='attempt_limit', updated_at=? WHERE id=?",
+                    (_now(), job_id),
+                )
+                return self.get_job(job_id)
+            busy = self._conn.execute(
+                "SELECT 1 FROM jobs WHERE status='running' AND id<>? LIMIT 1",
+                (job_id,),
+            ).fetchone()
+            if busy is not None:
+                raise StaleTurnError("Another job is executing")
+            self._conn.execute(
+                "UPDATE tool_invocations SET status='cancelled' WHERE job_id=? "
+                "AND status IN ('proposed', 'waiting_approval')",
+                (job_id,),
+            )
+            self._conn.execute(
+                "UPDATE job_steps SET status='cancelled', updated_at=? WHERE "
+                "job_id=? AND kind='tool' AND status IN ('queued', 'waiting_approval')",
+                (_now(), job_id),
+            )
+            self._conn.execute(
+                "UPDATE tool_approvals SET status='invalidated' WHERE job_id=? "
+                "AND status='issued'",
+                (job_id,),
+            )
+            changed = self._conn.execute(
+                "UPDATE turns SET status='pending', error_code=NULL WHERE id=? "
+                "AND status IN ('pending', 'interrupted')",
+                (row["turn_id"],),
+            )
+            if changed.rowcount != 1:
+                raise StaleTurnError("Job turn cannot resume")
+            self._conn.execute(
+                "UPDATE jobs SET status='running', attempt=attempt+1, "
+                "deadline_at=?, progress='generating', updated_at=? WHERE id=?",
+                (
+                    (datetime.now(UTC) + timedelta(minutes=3)).isoformat(
+                        timespec="microseconds"
+                    ),
+                    _now(),
+                    job_id,
+                ),
+            )
+            self._conn.execute(
+                "UPDATE job_steps SET status='running', attempt=attempt+1, "
+                "updated_at=? WHERE job_id=? AND kind='chat' "
+                "AND status IN ('queued', 'interrupted', 'running')",
+                (_now(), job_id),
+            )
+        return self.get_job(job_id)
+
+    @_on_owner
+    def request_job_cancel(self, job_id: str) -> Job:
+        with self._transaction():
+            row = self._conn.execute(
+                "SELECT * FROM jobs WHERE id=?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise StaleTurnError("Job does not exist")
+            if JobStatus(row["status"]) not in TERMINAL_JOBS:
+                self._conn.execute(
+                    "UPDATE jobs SET status='cancel_requested', cancel_requested=1, "
+                    "progress='cancelling', updated_at=? WHERE id=?",
+                    (_now(), job_id),
+                )
+        return self.get_job(job_id)
+
+    @_on_owner
+    def settle_job_cancel(self, job_id: str) -> Job:
+        with self._transaction():
+            row = self._conn.execute(
+                "SELECT * FROM jobs WHERE id=?", (job_id,)
+            ).fetchone()
+            if row is None or row["status"] != "cancel_requested":
+                raise StaleTurnError("Job is not cancelling")
+            self._conn.execute(
+                "UPDATE turns SET status='interrupted', error_code='cancelled' "
+                "WHERE id=? AND status IN ('pending', 'interrupted')",
+                (row["turn_id"],),
+            )
+            self._conn.execute(
+                "UPDATE turn_drafts SET status='interrupted' WHERE turn_id=?",
+                (row["turn_id"],),
+            )
+            self._conn.execute(
+                "UPDATE tool_invocations SET status='cancelled' WHERE job_id=? "
+                "AND status IN ('proposed', 'waiting_approval')",
+                (job_id,),
+            )
+            self._conn.execute(
+                "UPDATE tool_approvals SET status='invalidated' WHERE job_id=? "
+                "AND status='issued'",
+                (job_id,),
+            )
+            self._conn.execute(
+                "UPDATE job_steps SET status='cancelled', updated_at=? "
+                "WHERE job_id=? AND status IN ('queued', 'running', 'waiting_approval', 'interrupted')",
+                (_now(), job_id),
+            )
+            self._conn.execute(
+                "UPDATE jobs SET status='cancelled', progress='cancelled', "
+                "updated_at=? WHERE id=?",
+                (_now(), job_id),
+            )
+        return self.get_job(job_id)
+
+    @_on_owner
+    def mark_job_waiting(self, job_id: str) -> Job:
+        with self._transaction():
+            changed = self._conn.execute(
+                "UPDATE jobs SET status='waiting_approval', progress='waiting_approval', "
+                "updated_at=? WHERE id=? AND status='running' AND cancel_requested=0",
+                (_now(), job_id),
+            )
+            if changed.rowcount != 1:
+                raise StaleTurnError("Job is not running")
+        return self.get_job(job_id)
+
     @_on_owner
     def begin_turn(
-        self, conversation_id: str, text: str, submission_id: str
+        self,
+        conversation_id: str,
+        text: str,
+        submission_id: str,
+        job_id: str | None = None,
+        profile_name: str = "fake",
     ) -> tuple[Turn, bool]:
         if not text or len(text) > 65_536:
             raise ValueError("Message must be 1–65,536 characters")
@@ -749,6 +1185,21 @@ class SqliteStore:
             ).fetchone()
             if active is not None:
                 raise ActiveTurnError("This conversation already has an active turn")
+            occupied = self._conn.execute(
+                "SELECT 1 FROM jobs WHERE conversation_id=? AND "
+                "(status NOT IN ('succeeded', 'failed', 'cancelled') OR "
+                "EXISTS (SELECT 1 FROM tool_invocations WHERE job_id=jobs.id "
+                "AND status='outcome_unknown')) LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+            if occupied is not None:
+                raise ActiveTurnError("This conversation has an unresolved job")
+            if job_id is not None:
+                queued = self._conn.execute(
+                    "SELECT COUNT(*) FROM jobs WHERE status='queued'"
+                ).fetchone()[0]
+                if queued >= 16:
+                    raise ActiveTurnError("The job queue is full")
             turn_position = self._conn.execute(
                 "SELECT COALESCE(MAX(position), 0) + 1 FROM turns WHERE conversation_id=?",
                 (conversation_id,),
@@ -793,10 +1244,38 @@ class SqliteStore:
                     _now(),
                 ),
             )
+            if job_id is not None:
+                now = _now()
+                deadline = (datetime.now(UTC) + timedelta(minutes=10)).isoformat(
+                    timespec="microseconds"
+                )
+                self._conn.execute(
+                    "INSERT INTO jobs (id, turn_id, conversation_id, kind, version, profile_name, "
+                    "status, next_step, attempt, deadline_at, progress, "
+                    "cancel_requested, created_at, updated_at) "
+                    "VALUES (?, ?, ?, 'chat', 1, ?, 'queued', 1, 0, ?, 'queued', 0, ?, ?)",
+                    (
+                        job_id,
+                        turn.id,
+                        conversation_id,
+                        profile_name,
+                        deadline,
+                        now,
+                        now,
+                    ),
+                )
+                self._conn.execute(
+                    "INSERT INTO job_steps (id, job_id, ordinal, kind, status, "
+                    "attempt, created_at, updated_at) "
+                    "VALUES (?, ?, 0, 'chat', 'queued', 0, ?, ?)",
+                    (f"{job_id}:chat", job_id, now, now),
+                )
             return turn, True
 
     @_on_owner
-    def complete_turn(self, turn_id: str, answer: str) -> Message:
+    def complete_turn(
+        self, turn_id: str, answer: str, expected_job_attempt: int | None = None
+    ) -> Message:
         if not answer:
             raise ValueError("Provider returned an empty answer")
         with self._transaction():
@@ -805,6 +1284,15 @@ class SqliteStore:
             ).fetchone()
             if turn is None or turn["status"] != TurnStatus.PENDING.value:
                 raise StaleTurnError("Turn is no longer pending")
+            job = self._conn.execute(
+                "SELECT * FROM jobs WHERE turn_id=?", (turn_id,)
+            ).fetchone()
+            if job is not None and (
+                job["status"] != "running"
+                or job["cancel_requested"]
+                or job["attempt"] != expected_job_attempt
+            ):
+                raise StaleTurnError("Job is not running or cancellation was requested")
             unresolved = self._conn.execute(
                 "SELECT 1 FROM tool_invocations WHERE turn_id=? "
                 "AND status NOT IN ('complete', 'denied', 'cancelled') LIMIT 1",
@@ -836,13 +1324,36 @@ class SqliteStore:
             if updated.rowcount != 1:
                 raise StaleTurnError("Turn changed before completion")
             self._conn.execute("DELETE FROM turn_drafts WHERE turn_id=?", (turn_id,))
+            if job is not None:
+                self._conn.execute(
+                    "UPDATE job_steps SET status='complete', updated_at=? "
+                    "WHERE job_id=? AND kind='chat' AND status='running'",
+                    (_now(), job["id"]),
+                )
+                self._conn.execute(
+                    "UPDATE jobs SET status='succeeded', progress='complete', "
+                    "updated_at=? WHERE id=? AND status='running'",
+                    (_now(), job["id"]),
+                )
         result = self.get_answer(turn_id)
         assert result is not None
         return result
 
     @_on_owner
-    def fail_turn(self, turn_id: str, code: str = "provider_error") -> Turn:
+    def fail_turn(
+        self,
+        turn_id: str,
+        code: str = "provider_error",
+        expected_job_attempt: int | None = None,
+    ) -> Turn:
         with self._transaction():
+            job = self._conn.execute(
+                "SELECT attempt, status FROM jobs WHERE turn_id=?", (turn_id,)
+            ).fetchone()
+            if job is not None and (
+                job["attempt"] != expected_job_attempt or job["status"] != "running"
+            ):
+                raise StaleTurnError("Stale job failure attempt")
             updated = self._conn.execute(
                 "UPDATE turns SET status='failed', error_code=? WHERE id=? AND status='pending'",
                 (code, turn_id),
@@ -862,6 +1373,17 @@ class SqliteStore:
                 "UPDATE tool_approvals SET status='invalidated' WHERE turn_id=? "
                 "AND status='issued'",
                 (turn_id,),
+            )
+            self._conn.execute(
+                "UPDATE jobs SET status='failed', progress='failed', error_code=?, "
+                "updated_at=? WHERE turn_id=? AND status='running' AND cancel_requested=0",
+                (code, _now(), turn_id),
+            )
+            self._conn.execute(
+                "UPDATE job_steps SET status='failed', updated_at=? WHERE "
+                "job_id=(SELECT id FROM jobs WHERE turn_id=?) AND kind='chat' "
+                "AND status='running'",
+                (_now(), turn_id),
             )
         row = self._conn.execute(
             "SELECT * FROM turns WHERE id=?", (turn_id,)

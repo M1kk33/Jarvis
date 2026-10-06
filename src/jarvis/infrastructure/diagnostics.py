@@ -8,8 +8,33 @@ from pathlib import Path
 
 
 class Diagnostics:
-    _events = frozenset({"turn_complete", "turn_failed", "turn_cancelled"})
-    _fields = frozenset({"turn_id", "bytes", "code"})
+    _events = frozenset(
+        {
+            "turn_complete",
+            "turn_failed",
+            "turn_cancelled",
+            "job_queued",
+            "job_running",
+            "job_waiting",
+            "job_succeeded",
+            "job_failed",
+            "job_cancel_requested",
+            "job_cancelled",
+            "tool_proposed",
+            "tool_complete",
+            "tool_unknown",
+        }
+    )
+    _fields = frozenset(
+        {
+            "turn_id",
+            "job_id",
+            "invocation_id",
+            "attempt",
+            "bytes",
+            "code",
+        }
+    )
 
     def __init__(self, data_dir: Path) -> None:
         path = data_dir / "logs"

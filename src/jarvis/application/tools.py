@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -226,11 +227,28 @@ class ToolService:
         store: ToolStore,
         backend: ToolBackend,
         policy: ToolPolicy | None = None,
+        diagnostics: Callable[[str, dict[str, str | int]], None] | None = None,
     ) -> None:
         self.store = store
         self.backend = backend
         self.policy = policy or ToolPolicy()
         self.registry = ToolRegistry()
+        self.diagnostics = diagnostics or (lambda _event, _fields: None)
+
+    def _log_invocation(self, event: str, invocation: ToolInvocation) -> None:
+        fields: dict[str, str | int] = {
+            "turn_id": invocation.turn_id,
+            "invocation_id": invocation.id,
+        }
+        if invocation.job_id is not None:
+            fields["job_id"] = invocation.job_id
+        self.diagnostics(event, fields)
+
+    async def _mark_unknown(self, invocation_id: str) -> None:
+        invocation = await self.store.run(
+            lambda: self.store.mark_tool_unknown(invocation_id)
+        )
+        self._log_invocation("tool_unknown", invocation)
 
     def schemas(self) -> list[dict[str, object]]:
         return self.registry.schemas(self.policy.capabilities)
@@ -239,6 +257,7 @@ class ToolService:
         self,
         turn_id: str,
         proposal: StreamToolCall,
+        expected_job_attempt: int | None = None,
     ) -> ToolInvocation:
         spec, arguments, canonical, digest = self.registry.parse(proposal)
         decision = self.policy.decision(spec)
@@ -259,6 +278,7 @@ class ToolService:
                     self.policy.version,
                     target,
                     decision,
+                    expected_job_attempt,
                 )
             )
         except asyncio.CancelledError:
@@ -266,6 +286,7 @@ class ToolService:
                 lambda: self.store.get_invocation_by_call(turn_id, proposal.call_id)
             )
             raise
+        self._log_invocation("tool_proposed", invocation)
         if invocation.status is InvocationStatus.COMPLETE:
             return invocation
         if invocation.status is InvocationStatus.WAITING_APPROVAL:
@@ -332,9 +353,7 @@ class ToolService:
                 lambda: self.store.get_invocation(invocation_id)
             )
             if current.status is InvocationStatus.INTENT:
-                await self.store.run(
-                    lambda: self.store.mark_tool_unknown(invocation_id)
-                )
+                await self._mark_unknown(invocation_id)
             raise
         try:
             current_target = await asyncio.to_thread(
@@ -348,12 +367,11 @@ class ToolService:
                 raise RequestFailure(
                     "invalid_request", "Tool target changed before execution"
                 )
-        except BaseException:
-            await _settle(
-                asyncio.create_task(
-                    self.store.run(lambda: self.store.mark_tool_unknown(invocation_id))
-                )
+            await self.store.run(
+                lambda: self.store.assert_tool_intent_active(invocation_id)
             )
+        except BaseException:
+            await _settle(asyncio.create_task(self._mark_unknown(invocation_id)))
             raise
 
         worker = asyncio.create_task(
@@ -371,12 +389,10 @@ class ToolService:
                     asyncio.shield(worker), spec.timeout_seconds
                 )
             except (Exception, asyncio.CancelledError):
-                await self.store.run(
-                    lambda: self.store.mark_tool_unknown(invocation_id)
-                )
+                await self._mark_unknown(invocation_id)
                 raise
         except TimeoutError as exc:
-            await self.store.run(lambda: self.store.mark_tool_unknown(invocation_id))
+            await self._mark_unknown(invocation_id)
             raise RequestFailure("timeout", "Tool execution timed out") from exc
         except Exception as exc:  # noqa: BLE001 - tool boundary records a typed failure
             code = exc.code if isinstance(exc, RequestFailure) else "unavailable"
@@ -407,9 +423,7 @@ class ToolService:
                 lambda: self.store.get_invocation(invocation_id)
             )
             if current.status is InvocationStatus.INTENT:
-                await self.store.run(
-                    lambda: self.store.mark_tool_unknown(invocation_id)
-                )
+                await self._mark_unknown(invocation_id)
             raise
         except Exception:
             current = await self.store.run(
@@ -418,6 +432,7 @@ class ToolService:
             if current.status is not InvocationStatus.COMPLETE:
                 raise
             result = current
+        self._log_invocation("tool_complete", result)
         if cancelled:
             raise asyncio.CancelledError
         return result

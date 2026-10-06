@@ -34,6 +34,8 @@ class ToolInvocation:
     decision: str
     result_json: str | None
     receipt_json: str | None
+    job_id: str | None = None
+    job_attempt: int | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,8 @@ class Approval:
     session_id: str
     expires_at: str
     status: Literal["issued", "consumed", "invalidated"]
+    job_id: str | None = None
+    job_attempt: int | None = None
 
 
 @dataclass(frozen=True)

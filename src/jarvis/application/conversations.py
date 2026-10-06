@@ -106,6 +106,23 @@ class ConversationService:
     def get_invocations(self, turn_id: str) -> list[ToolInvocation]:
         return self.store.get_invocations(turn_id)
 
+    async def generate_existing_turn_async(
+        self,
+        turn_id: str,
+        conversation_id: str,
+        cancel: Event,
+        on_delta: Callable[[str], Awaitable[None]] | None = None,
+        job_attempt: int | None = None,
+    ) -> str | None:
+        """Generate for a runner-owned turn; the runner commits its outcome."""
+        if self.tool_service is not None:
+            return await self._run_tool_loop(
+                turn_id, conversation_id, cancel, on_delta, job_attempt
+            )
+        return await self._single_reply(
+            turn_id, conversation_id, cancel, on_delta, job_attempt
+        )
+
     def send(
         self, conversation_id: str, text: str, submission_id: str | None = None
     ) -> SendResult:
@@ -267,6 +284,7 @@ class ConversationService:
         conversation_id: str,
         signal: Event,
         on_delta: Callable[[str], Awaitable[None]] | None,
+        job_attempt: int | None = None,
     ) -> str:
         messages: list[Message] = []
         cursor: int | None = None
@@ -292,7 +310,7 @@ class ConversationService:
                 if isinstance(self.provider, ExactTokenCounter):
                     selected = await self._fit_exact_context(selected)
                 answer_text = await self._consume_stream(
-                    turn_id, selected, signal, on_delta
+                    turn_id, selected, signal, on_delta, job_attempt
                 )
             except BaseException:
                 signal.set()
@@ -304,7 +322,7 @@ class ConversationService:
                 await handle.release()
         else:
             answer_text = await self._consume_stream(
-                turn_id, selected, signal, on_delta
+                turn_id, selected, signal, on_delta, job_attempt
             )
         return answer_text
 
@@ -314,6 +332,7 @@ class ConversationService:
         conversation_id: str,
         signal: Event,
         on_delta: Callable[[str], Awaitable[None]] | None,
+        job_attempt: int | None = None,
     ) -> str | None:
         assert self.tool_service is not None
         assert isinstance(self.provider, ToolChatProvider)
@@ -362,6 +381,7 @@ class ConversationService:
                     schemas,
                     signal,
                     on_delta,
+                    job_attempt,
                 )
                 if proposal is None:
                     assert text is not None
@@ -369,7 +389,9 @@ class ConversationService:
                 proposals += 1
                 if proposals > 4:
                     raise RequestFailure("invalid_request", "Tool call limit exceeded")
-                invocation = await self.tool_service.propose_and_run(turn_id, proposal)
+                invocation = await self.tool_service.propose_and_run(
+                    turn_id, proposal, job_attempt
+                )
                 if invocation.status is InvocationStatus.WAITING_APPROVAL:
                     return None
                 if invocation.status is not InvocationStatus.COMPLETE:
@@ -433,6 +455,7 @@ class ConversationService:
         schemas: list[dict[str, object]],
         cancel: Event,
         on_delta: Callable[[str], Awaitable[None]] | None,
+        job_attempt: int | None,
     ) -> tuple[str | None, StreamToolCall | None]:
         assert isinstance(self.provider, ToolChatProvider)
         iterator = iter(
@@ -496,7 +519,12 @@ class ConversationService:
                 or now - last_checkpoint >= 1
             ):
                 await self.store.run(
-                    partial(self.store.checkpoint_draft, turn_id, "".join(parts))
+                    partial(
+                        self.store.checkpoint_draft,
+                        turn_id,
+                        "".join(parts),
+                        job_attempt,
+                    )
                 )
                 since_checkpoint = 0
                 last_checkpoint = now
@@ -543,6 +571,7 @@ class ConversationService:
         messages: Sequence[Message],
         cancel: Event,
         on_delta: Callable[[str], Awaitable[None]] | None,
+        job_attempt: int | None,
     ) -> str:
         iterator = iter(self.provider.stream(messages, cancel, self.instructions))
         chunks: list[str] = []
@@ -606,7 +635,7 @@ class ConversationService:
                 or now - last_checkpoint >= 1
             ):
                 await self.store.run(
-                    partial(self.store.checkpoint_draft, turn_id, text)
+                    partial(self.store.checkpoint_draft, turn_id, text, job_attempt)
                 )
                 bytes_since_checkpoint = 0
                 last_checkpoint = now
