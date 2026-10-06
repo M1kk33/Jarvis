@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Open Jarvis</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body class="setup-page">
+  <main class="setup-card">
+    <div class="brand">Jarvis</div>
+    <h1>Open your local assistant</h1>
+    <p>Enter the one-time token shown in the Jarvis terminal.</p>
+    <form id="setup-form">
+      <label for="setup-token">Setup token</label>
+      <input id="setup-token" type="password" autocomplete="off" required autofocus>
+      <button type="submit">Open Jarvis</button>
+    </form>
+    <p id="notice" class="notice" role="status"></p>
+  </main>
+</body>
+</html>

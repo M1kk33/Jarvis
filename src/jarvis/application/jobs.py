@@ -33,6 +33,7 @@ class JobRunner:
         self._execution = asyncio.Lock()
         self._active: dict[str, tuple[Event, asyncio.Task[Job]]] = {}
         self._background: set[asyncio.Task[Job]] = set()
+        self._launched: dict[str, asyncio.Task[Job]] = {}
         self._diagnostics = conversations.diagnostics
 
     async def submit(
@@ -69,10 +70,26 @@ class JobRunner:
         job_id: str,
         on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> asyncio.Task[Job]:
+        existing = self._launched.get(job_id)
+        if existing is not None and not existing.done():
+            return existing
         task = asyncio.create_task(self.run_job(job_id, on_delta))
         self._background.add(task)
-        task.add_done_callback(self._background.discard)
+        self._launched[job_id] = task
+
+        def finished(completed: asyncio.Task[Job]) -> None:
+            self._background.discard(completed)
+            if self._launched.get(job_id) is completed:
+                self._launched.pop(job_id, None)
+            if not completed.cancelled():
+                completed.exception()
+
+        task.add_done_callback(finished)
         return task
+
+    async def wait_for_idle(self) -> None:
+        if self._background:
+            await asyncio.gather(*self._background, return_exceptions=True)
 
     async def run_job(
         self,

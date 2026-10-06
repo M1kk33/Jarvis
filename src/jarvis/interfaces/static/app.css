@@ -1,0 +1,41 @@
+:root { color-scheme: light; font-family: system-ui, sans-serif; color: #17223a; background: #f3f5f9; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input, textarea { font: inherit; }
+button { cursor: pointer; border: 0; border-radius: 8px; background: #174db7; color: white; padding: .65rem .9rem; }
+button:hover { background: #103b91; }
+button:disabled { opacity: .55; cursor: wait; }
+button.quiet { background: #e8eef9; color: #174db7; }
+h1 { font-size: 1.4rem; margin: .25rem 0; }
+h2 { font-size: .86rem; text-transform: uppercase; letter-spacing: .06em; color: #58647a; margin: 1.5rem 0 .75rem; }
+.brand { font-weight: 750; font-size: 1.35rem; letter-spacing: -.03em; margin-bottom: 1.6rem; }
+.layout { display: grid; grid-template-columns: 235px minmax(350px, 1fr) 270px; min-height: 100vh; }
+.sidebar, .activity { padding: 1.4rem; background: #fff; }
+.sidebar { border-right: 1px solid #e1e6ef; }
+.activity { border-left: 1px solid #e1e6ef; }
+.sidebar nav { display: grid; gap: .3rem; }
+.sidebar nav button { text-align: left; background: transparent; color: #243350; overflow-wrap: anywhere; }
+.sidebar nav button.selected { background: #e8eef9; color: #174db7; }
+.chat { display: flex; flex-direction: column; min-height: 100vh; max-height: 100vh; }
+.chat header { display: flex; justify-content: space-between; align-items: center; padding: 1.3rem 1.8rem; border-bottom: 1px solid #e1e6ef; }
+.eyebrow { text-transform: uppercase; letter-spacing: .07em; font-size: .72rem; color: #66748d; margin: 0; }
+.messages { flex: 1; overflow-y: auto; padding: 1.5rem 1.8rem; }
+.message { max-width: 760px; margin: 0 auto 1rem; padding: .9rem 1.1rem; border-radius: 12px; background: white; box-shadow: 0 1px 4px #16213c12; }
+.message.user { background: #e4edff; }
+.message .role { font-size: .75rem; font-weight: 700; color: #58647a; margin-bottom: .4rem; }
+.message pre, .card pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 0; }
+.draft { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 1.8rem .6rem; color: #354464; font: inherit; }
+.composer { display: grid; gap: .5rem; padding: 1rem 1.8rem; background: white; border-top: 1px solid #e1e6ef; }
+.composer textarea, .setup-card input { width: 100%; border: 1px solid #bac6da; border-radius: 8px; padding: .75rem; background: #fff; color: #17223a; }
+.composer button { justify-self: end; }
+.notice { min-height: 1.2rem; color: #8b302c; margin: .4rem 1.8rem; font-size: .9rem; }
+.card { border: 1px solid #e1e6ef; border-radius: 10px; padding: .85rem; margin-bottom: .65rem; overflow-wrap: anywhere; }
+.card .subtle { color: #66748d; font-size: .78rem; }
+.card button { margin-top: .6rem; margin-right: .3rem; font-size: .8rem; }
+.empty { color: #66748d; font-size: .9rem; }
+.setup-page { display: grid; place-items: center; min-height: 100vh; }
+.setup-card { width: min(440px, calc(100vw - 2rem)); padding: 2rem; border-radius: 14px; background: white; box-shadow: 0 10px 40px #16213c18; }
+.setup-card form { display: grid; gap: .65rem; margin-top: 1.5rem; }
+.setup-card .notice { margin: 1rem 0 0; }
+@media (max-width: 900px) { .layout { grid-template-columns: 180px 1fr; } .activity { grid-column: 1 / -1; border-left: 0; border-top: 1px solid #e1e6ef; } }
+@media (max-width: 620px) { .layout { display: block; } .sidebar { border-right: 0; border-bottom: 1px solid #e1e6ef; } .chat { min-height: 70vh; max-height: none; } }

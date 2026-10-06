@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">Jarvis</div>
+      <button id="new-conversation" type="button">New conversation</button>
+      <h2>Conversations</h2>
+      <nav id="conversations" aria-label="Conversations"></nav>
+    </aside>
+    <main class="chat">
+      <header>
+        <div>
+          <p class="eyebrow">Private · on this computer</p>
+          <h1 id="conversation-title">Select a conversation</h1>
+        </div>
+        <button id="refresh" type="button" class="quiet">Refresh</button>
+      </header>
+      <div id="messages" class="messages" aria-live="polite"></div>
+      <pre id="draft" class="draft" aria-live="polite"></pre>
+      <form id="send-form" class="composer">
+        <label for="message-input">Your message</label>
+        <textarea id="message-input" rows="3" maxlength="65536" required></textarea>
+        <button id="send-button" type="submit">Send</button>
+      </form>
+      <p id="notice" class="notice" role="status"></p>
+    </main>
+    <aside class="activity">
+      <h2>Activity</h2>
+      <div id="jobs"></div>
+      <h2>Approvals</h2>
+      <div id="approvals"></div>
+    </aside>
+  </div>
+</body>
+</html>

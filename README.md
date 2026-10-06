@@ -1,6 +1,6 @@
-# Jarvis (M6)
+# Jarvis (M7)
 
-Jarvis supports durable terminal conversations with a deterministic offline fake or one pinned local Qwen3-4B text model. M6 adds durable chat jobs with visible progress, cancellation, explicit recovery, and verified backup/restore. The three read-only tools remain current UTC time, bounded directory listing, and bounded UTF-8 file reading. No shell, network, or file-writing tool is available.
+Jarvis supports durable terminal and local-browser conversations with a deterministic offline fake or one pinned local Qwen3-4B text model. M7 adds a single-worker browser interface on `127.0.0.1` for chat, history, jobs, progress, and exact-action approvals. Durable cancellation, explicit recovery, and verified backup/restore remain available. The three read-only tools remain current UTC time, bounded directory listing, and bounded UTF-8 file reading. No shell, network, or file-writing tool is available.
 
 ## Setup
 
@@ -26,6 +26,7 @@ uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData resume-job JOB_ID
 uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData diagnostics
 uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData backup
 uv run --python 3.12 python -m jarvis --data-dir E:\RestoredJarvisData restore E:\JarvisData\backups\BACKUP_ID
+uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData web
 ```
 
 For the local model, copy [the example profile](profiles/qwen3-4b-instruct-2507.example.toml) to `E:\JarvisData\model.toml` and place its exact pinned files at the paths in that profile. M4 pins llama.cpp b11429 (Windows CUDA 12.4, `llama-server.exe` SHA-256 `7e236243c9b670c6a49410c03186fd575c57a0efe3fd8a21d8727503d571d5b6`) and `bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF` revision `ae44f08e1392f39c0e474af10c3ff8355c8b6688`, Q4_K_M GGUF SHA-256 `2fde00ce69dd4899c70d020845e2638353015bba0fdf161b3eb965f2bca4464e`. Change `device_uuid` and `device_index` only to match the GPU being used. Downloads are explicit setup actions; normal chat works offline. The runtime and model remain outside this repository. See the [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases/tag/b11429) and [GGUF conversion](https://huggingface.co/bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF/tree/ae44f08e1392f39c0e474af10c3ff8355c8b6688) for the pinned sources.
@@ -36,6 +37,10 @@ uv run --offline --locked --python 3.12 python -m jarvis --data-dir E:\JarvisDat
 ```
 
 `calibrate` records system-wide free-memory samples about every 250 ms, load time, first-token time, throughput, hashes, and driver version in private `calibration.json`. It checks a long prompt and direct unauthenticated requests before reporting whether the profile bounds passed. It does not change the profile automatically; set `calibrated = true` in the private profile only after a successful run on this hardware. In `session`, type `/jobs`, `/status JOB_ID`, `/cancel JOB_ID`, `/resume-job JOB_ID`, `/unload`, or `/exit`. A one-shot `send` also accepts `--profile` and unloads before exiting. The model server uses one 4,096-token slot and a per-launch secret.
+
+For a model-backed browser session, add `--profile E:\JarvisData\model.toml` before `web`; add narrow `--read-root` grants in the same way as a terminal session. `web` binds only to `127.0.0.1` on port 8765 by default (`--port` selects another local port). Open the printed `/setup` address and enter the one-time token printed in the terminal. The token is exchanged once for a browser-session cookie; keep the server running while using the page. A second tab in that browser can view or cancel the same job. Closing a tab leaves active work running; stopping the server waits for active jobs to settle.
+
+The page renders assistant and tool text literally, without Markdown previews or external images. Its restrictive Content Security Policy blocks external resource loads. Mutations require the session cookie, same-origin requests, and a CSRF token. Artifact downloads require the same session and serve only verified stored artifacts as attachments. Approval cards display the tool, canonical arguments, target, policy, and owning job before the user approves or rejects. Current default read-only tools normally do not require approval.
 
 To enable file reads, create a narrow workspace directory and grant it explicitly. The private data directory itself cannot be a read root. Without `--read-root`, model sessions expose only `current_time`.
 
@@ -68,4 +73,4 @@ uv run --offline --locked --python 3.12 ruff format --check .
 uv run --offline --locked --python 3.12 mypy src/jarvis
 ```
 
-The tests use temporary real SQLite databases, fake Windows processes, and recorded HTTP/stream fixtures; they run offline. The M5 live check used `read_text_file`, saved its receipt/result, then answered a follow-up after restart using that result without another file read. See `ARCHITECTURE.md` for the design and later milestones.
+The tests use temporary real SQLite databases, fake Windows processes, recorded HTTP/stream fixtures, and local ASGI requests; they run offline. The M5 live check used `read_text_file`, saved its receipt/result, then answered a follow-up after restart using that result without another file read. See `ARCHITECTURE.md` for the design and later milestones.

@@ -42,6 +42,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     session = commands.add_parser("session", help="Interactive local model session")
     session.add_argument("conversation_id")
+    web = commands.add_parser("web", help="Start the local browser interface")
+    web.add_argument("--port", type=int, default=8765)
     commands.add_parser("jobs", help="List durable jobs")
     status = commands.add_parser("status", help="Show a durable job")
     status.add_argument("job_id")

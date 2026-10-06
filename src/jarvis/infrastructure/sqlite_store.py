@@ -985,6 +985,28 @@ class SqliteStore:
         ]
 
     @_on_owner
+    def get_artifact_bytes(self, artifact_id: str) -> bytes:
+        row = self._conn.execute(
+            "SELECT relative_path, size_bytes, sha256 FROM artifacts "
+            "WHERE id=? AND status='available'",
+            (artifact_id,),
+        ).fetchone()
+        if row is None:
+            raise StaleTurnError("Artifact is unavailable")
+        if row["size_bytes"] > 16 * 1024 * 1024:
+            raise ValueError("Artifact exceeds browser download limit")
+        path = verify_artifact(
+            self.data_dir, row["relative_path"], row["size_bytes"], row["sha256"]
+        )
+        data = path.read_bytes()
+        if (
+            len(data) != row["size_bytes"]
+            or hashlib.sha256(data).hexdigest() != row["sha256"]
+        ):
+            raise ValueError("Artifact changed during download")
+        return data
+
+    @_on_owner
     def backup_database(self, destination: Path) -> None:
         """Use SQLite's online backup API; never copy the live WAL database."""
         with closing(sqlite3.connect(destination)) as snapshot:

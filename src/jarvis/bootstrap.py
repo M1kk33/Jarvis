@@ -49,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
                     raise ValueError("Calibration requires --profile")
                 if args.read_root and (
                     not args.profile
-                    or args.command not in {"send", "session", "resume-job"}
+                    or args.command not in {"send", "session", "resume-job", "web"}
                 ):
                     raise ValueError(
                         "Read tools require a model session or send command"
@@ -60,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
                     "calibrate",
                     "resume-job",
                     "diagnostics",
+                    "web",
                 }:
                     profile = LocalTextProfile.from_file(
                         Path(args.profile), store.data_dir
@@ -159,7 +160,12 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     return 0
                 tool_service = None
-                if args.profile and args.command in {"send", "session", "resume-job"}:
+                if args.profile and args.command in {
+                    "send",
+                    "session",
+                    "resume-job",
+                    "web",
+                }:
                     backend = SafeReadTools(
                         [Path(root) for root in args.read_root], store.data_dir
                     )
@@ -196,12 +202,46 @@ def main(argv: list[str] | None = None) -> int:
                     if profile is not None
                     else "fake"
                 )
-                return dispatch(
-                    args,
-                    service,
-                    manager,
-                    JobRunner(store, service, profile_identity),
-                )
+                runner = JobRunner(store, service, profile_identity)
+                if args.command == "web":
+                    if not 1024 <= args.port <= 65535:
+                        raise ValueError("Web port must be between 1024 and 65535")
+                    import uvicorn
+
+                    from jarvis.interfaces.web import create_web_app
+
+                    app, setup_token = create_web_app(
+                        service, runner, tool_service, args.port
+                    )
+                    print(f"Open http://127.0.0.1:{args.port}/setup")
+                    print(f"One-time setup token: {setup_token}", flush=True)
+
+                    async def serve() -> None:
+                        server = uvicorn.Server(
+                            uvicorn.Config(
+                                app,
+                                host="127.0.0.1",
+                                port=args.port,
+                                workers=1,
+                                reload=False,
+                                access_log=False,
+                                proxy_headers=False,
+                                server_header=False,
+                            )
+                        )
+                        try:
+                            await server.serve()
+                        finally:
+                            await runner.wait_for_idle()
+                            if manager is not None:
+                                await manager.close()
+
+                    try:
+                        asyncio.run(serve())
+                    except KeyboardInterrupt:
+                        pass
+                    return 0
+                return dispatch(args, service, manager, runner)
             finally:
                 diagnostics.close()
     except (
