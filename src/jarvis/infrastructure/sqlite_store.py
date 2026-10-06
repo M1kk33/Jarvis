@@ -128,8 +128,18 @@ class SqliteStore:
                 "UPDATE tool_invocations SET status='outcome_unknown' WHERE status='intent'"
             )
             self._conn.execute(
+                "UPDATE image_steps SET status='outcome_unknown', updated_at=? "
+                "WHERE status='running'",
+                (_now(),),
+            )
+            self._conn.execute(
                 "UPDATE tool_invocations SET status='cancelled' "
                 "WHERE status IN ('proposed', 'waiting_approval')"
+            )
+            self._conn.execute(
+                "UPDATE image_steps SET status='cancelled', updated_at=? "
+                "WHERE status='queued'",
+                (_now(),),
             )
             self._conn.execute(
                 "UPDATE turns SET status='interrupted', error_code='interrupted' WHERE status='pending'"
@@ -221,6 +231,7 @@ class SqliteStore:
             (2, "002_drafts.sql"),
             (3, "003_tools.sql"),
             (4, "004_jobs.sql"),
+            (5, "005_images.sql"),
         ):
             script = (
                 resources.files("jarvis")
@@ -605,6 +616,17 @@ class SqliteStore:
             ).fetchone()[0]
             if ordinal > 4:
                 raise ValueError("Tool call limit exceeded")
+            if (
+                name == "generate_image"
+                and self._conn.execute(
+                    "SELECT 1 FROM tool_invocations WHERE turn_id=? AND name='generate_image' LIMIT 1",
+                    (turn_id,),
+                ).fetchone()
+                is not None
+            ):
+                raise ValueError("Only one image is permitted per turn")
+            if name == "generate_image" and job is None:
+                raise ValueError("Image generation requires a durable job")
             invocation_id = str(uuid4())
             status = (
                 "waiting_approval"
@@ -650,6 +672,12 @@ class SqliteStore:
                         _now(),
                     ),
                 )
+                if name == "generate_image":
+                    self._conn.execute(
+                        "INSERT INTO image_steps (invocation_id, job_id, status, created_at, updated_at) "
+                        "VALUES (?, ?, 'queued', ?, ?)",
+                        (invocation_id, job["id"], _now(), _now()),
+                    )
         return self.get_invocation(invocation_id)
 
     @_on_owner
@@ -817,6 +845,12 @@ class SqliteStore:
                     "('queued', 'waiting_approval')",
                     (_now(), invocation_id),
                 )
+                if row["name"] == "generate_image":
+                    self._conn.execute(
+                        "UPDATE image_steps SET status='running', updated_at=? "
+                        "WHERE invocation_id=? AND status='queued'",
+                        (_now(), invocation_id),
+                    )
                 self._conn.execute(
                     "UPDATE jobs SET status='running', progress='tool_running', "
                     "updated_at=? WHERE id=? AND status='waiting_approval'",
@@ -873,6 +907,11 @@ class SqliteStore:
             ).fetchone()
             if row["job_id"] is not None:
                 self._conn.execute(
+                    "UPDATE image_steps SET status='complete', updated_at=? "
+                    "WHERE invocation_id=? AND status='running'",
+                    (_now(), invocation_id),
+                )
+                self._conn.execute(
                     "UPDATE job_steps SET status='complete', updated_at=? "
                     "WHERE invocation_id=? AND status='running'",
                     (_now(), invocation_id),
@@ -886,6 +925,81 @@ class SqliteStore:
         return self.get_invocation(invocation_id)
 
     @_on_owner
+    def commit_image_result(
+        self,
+        invocation_id: str,
+        artifact_id: str,
+        relative_path: str,
+        size_bytes: int,
+        sha256: str,
+        receipt_json: str,
+        result_json: str,
+    ) -> ToolInvocation:
+        with self._transaction():
+            row = self._conn.execute(
+                "SELECT i.*, t.status AS turn_status, j.status AS job_status, "
+                "j.cancel_requested, j.attempt AS active_attempt "
+                "FROM tool_invocations i JOIN turns t ON t.id=i.turn_id "
+                "JOIN jobs j ON j.id=i.job_id WHERE i.id=? AND i.name='generate_image'",
+                (invocation_id,),
+            ).fetchone()
+            if (
+                row is None
+                or row["status"] != "intent"
+                or row["turn_status"] != "pending"
+                or row["job_status"] != "running"
+                or row["cancel_requested"]
+                or row["job_attempt"] != row["active_attempt"]
+            ):
+                raise StaleTurnError("Image intent is no longer active")
+            step = self._conn.execute(
+                "SELECT status FROM image_steps WHERE invocation_id=?",
+                (invocation_id,),
+            ).fetchone()
+            if step is None or step["status"] != "running":
+                raise StaleTurnError("Image step is not running")
+            self._conn.execute(
+                "INSERT INTO artifacts (id, job_id, relative_path, kind, size_bytes, sha256, status, created_at) "
+                "VALUES (?, ?, ?, 'image/png', ?, ?, 'available', ?)",
+                (artifact_id, row["job_id"], relative_path, size_bytes, sha256, _now()),
+            )
+            self._conn.execute(
+                "UPDATE image_steps SET status='complete', artifact_id=?, updated_at=? WHERE invocation_id=?",
+                (artifact_id, _now(), invocation_id),
+            )
+            self._conn.execute(
+                "UPDATE tool_invocations SET status='complete', receipt_json=?, result_json=?, completed_at=? "
+                "WHERE id=?",
+                (receipt_json, result_json, _now(), invocation_id),
+            )
+            self._conn.execute(
+                "UPDATE job_steps SET status='complete', updated_at=? WHERE invocation_id=? AND status='running'",
+                (_now(), invocation_id),
+            )
+            self._conn.execute(
+                "UPDATE jobs SET next_step=?, progress='image_complete', updated_at=? "
+                "WHERE id=? AND status='running' AND cancel_requested=0",
+                (row["ordinal"] + 1, _now(), row["job_id"]),
+            )
+        return self.get_invocation(invocation_id)
+
+    @_on_owner
+    def set_image_progress(self, invocation_id: str, stage: str) -> None:
+        if stage not in {"image_loading", "image_generating", "image_finalizing"}:
+            raise ValueError("Invalid image stage")
+        self.assert_tool_intent_active(invocation_id)
+        row = self._conn.execute(
+            "SELECT job_id FROM tool_invocations WHERE id=? AND name='generate_image'",
+            (invocation_id,),
+        ).fetchone()
+        if row is None or row["job_id"] is None:
+            raise StaleTurnError("Image step is unavailable")
+        self._conn.execute(
+            "UPDATE jobs SET progress=?, updated_at=? WHERE id=? AND status='running' AND cancel_requested=0",
+            (stage, _now(), row["job_id"]),
+        )
+
+    @_on_owner
     def mark_tool_unknown(self, invocation_id: str) -> ToolInvocation:
         with self._transaction():
             changed = self._conn.execute(
@@ -897,6 +1011,11 @@ class SqliteStore:
                 raise StaleTurnError("Tool execution intent is not active")
             self._conn.execute(
                 "UPDATE job_steps SET status='outcome_unknown', updated_at=? "
+                "WHERE invocation_id=? AND status='running'",
+                (_now(), invocation_id),
+            )
+            self._conn.execute(
+                "UPDATE image_steps SET status='outcome_unknown', updated_at=? "
                 "WHERE invocation_id=? AND status='running'",
                 (_now(), invocation_id),
             )
@@ -1005,6 +1124,18 @@ class SqliteStore:
         ):
             raise ValueError("Artifact changed during download")
         return data
+
+    @_on_owner
+    def list_artifacts_for_conversation(
+        self, conversation_id: str
+    ) -> list[dict[str, str]]:
+        rows = self._conn.execute(
+            "SELECT a.id, a.kind, a.status, j.turn_id FROM artifacts a "
+            "JOIN jobs j ON j.id=a.job_id WHERE j.conversation_id=? "
+            "ORDER BY a.created_at, a.id",
+            (conversation_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     @_on_owner
     def backup_database(self, destination: Path) -> None:

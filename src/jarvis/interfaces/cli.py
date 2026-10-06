@@ -19,6 +19,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--profile", help="Pinned local model profile; omit for the offline fake"
     )
     parser.add_argument(
+        "--image-profile", help="Pinned local SD 1.5 image profile; requires --profile"
+    )
+    parser.add_argument(
         "--read-root",
         action="append",
         default=[],

@@ -20,6 +20,7 @@ from fastapi.responses import (
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from jarvis.application.conversations import ConversationService
+from jarvis.application.images import validate_png
 from jarvis.application.jobs import JobRunner
 from jarvis.application.tools import ToolService
 from jarvis.domain.jobs import TERMINAL_JOBS, Job, JobStatus
@@ -29,6 +30,7 @@ from jarvis.domain.types import (
     ConversationError,
     ConversationNotFound,
     Message,
+    RequestFailure,
     StaleTurnError,
 )
 
@@ -278,14 +280,16 @@ def create_web_app(
                 for turn in turns
                 if (draft := service.store.get_draft(turn.id)) is not None
             ]
-            return record, turns, messages, drafts
+            artifacts = service.store.list_artifacts_for_conversation(conversation_id)
+            return record, turns, messages, drafts, artifacts
 
-        record, turns, messages, drafts = await service.store.run(snapshot)
+        record, turns, messages, drafts, artifacts = await service.store.run(snapshot)
         return {
             "conversation": asdict(record),
             "turns": [asdict(turn) for turn in turns],
             "messages": [_message(message) for message in messages],
             "drafts": [asdict(draft) for draft in drafts],
+            "artifacts": artifacts,
         }
 
     @app.post("/api/conversations/{conversation_id}/messages")
@@ -441,6 +445,20 @@ def create_web_app(
             data,
             media_type="application/octet-stream",
             headers={"Content-Disposition": 'attachment; filename="artifact.bin"'},
+        )
+
+    @app.get("/api/artifacts/{artifact_id}/preview")
+    async def image_preview(request: Request, artifact_id: str):
+        authorize(request)
+        try:
+            data = await runner.store.run(
+                lambda: runner.store.get_artifact_bytes(artifact_id)
+            )
+            validate_png(data)
+        except (ValueError, OSError, RequestFailure) as exc:
+            raise HTTPException(404, "Image is unavailable") from exc
+        return Response(
+            data, media_type="image/png", headers={"Cache-Control": "no-store"}
         )
 
     return app, setup_token

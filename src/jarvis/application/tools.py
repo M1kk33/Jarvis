@@ -9,8 +9,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
+from jarvis.application.images import ImageService
 from jarvis.application.resource_manager import _settle
 from jarvis.domain.ports import ToolStore
+from jarvis.domain.resources import AdmissionDenied
 from jarvis.domain.tools import InvocationStatus, ToolInvocation
 from jarvis.domain.types import RequestFailure, StreamToolCall
 
@@ -29,6 +31,25 @@ class ToolSpec:
 
 
 SPECS = (
+    ToolSpec(
+        "generate_image",
+        1,
+        {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "minLength": 1, "maxLength": 1000},
+                "seed": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+            },
+            "required": ["prompt"],
+            "additionalProperties": False,
+        },
+        "local_image",
+        "image",
+        600,
+        1024,
+        True,
+        "never_without_reconciliation",
+    ),
     ToolSpec(
         "current_time",
         1,
@@ -162,6 +183,7 @@ class ToolRegistry:
                 "function": {
                     "name": spec.name,
                     "description": {
+                        "generate_image": "Generate one local 512 x 512 PNG from a bounded prompt.",
                         "current_time": "Return the current UTC time.",
                         "list_directory": "List names in an approved local directory.",
                         "read_text_file": "Read a bounded UTF-8 text file in an approved root.",
@@ -200,13 +222,14 @@ class ToolRegistry:
         if type(value) is not dict:
             raise RequestFailure("invalid_request", "Tool arguments must be an object")
         allowed = {
+            "generate_image": frozenset({"prompt", "seed"}),
             "current_time": frozenset(),
             "list_directory": frozenset({"path"}),
             "read_text_file": frozenset({"path", "max_bytes"}),
         }[spec.name]
         if not value.keys() <= allowed:
             raise RequestFailure("invalid_request", "Unknown tool argument")
-        if spec.name != "current_time":
+        if spec.name in {"list_directory", "read_text_file"}:
             path = value.get("path")
             if type(path) is not str or not 1 <= len(path) <= 1024:
                 raise RequestFailure(
@@ -216,6 +239,20 @@ class ToolRegistry:
             limit = value["max_bytes"]
             if type(limit) is not int or not 1 <= limit <= 16384:
                 raise RequestFailure("invalid_request", "Invalid file byte limit")
+        if spec.name == "generate_image":
+            prompt = value.get("prompt")
+            seed = value.get("seed", 0)
+            if (
+                type(prompt) is not str
+                or not 1 <= len(prompt) <= 1000
+                or not prompt.strip()
+            ):
+                raise RequestFailure(
+                    "invalid_request", "Image prompt must be 1–1000 characters"
+                )
+            if type(seed) is not int or not 0 <= seed <= 2147483647:
+                raise RequestFailure("invalid_request", "Image seed is invalid")
+            value["seed"] = seed
         canonical = _canonical(value)
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         return spec, value, canonical, digest
@@ -228,12 +265,23 @@ class ToolService:
         backend: ToolBackend,
         policy: ToolPolicy | None = None,
         diagnostics: Callable[[str, dict[str, str | int]], None] | None = None,
+        image_service: ImageService | None = None,
     ) -> None:
         self.store = store
         self.backend = backend
         self.policy = policy or ToolPolicy()
         self.registry = ToolRegistry()
         self.diagnostics = diagnostics or (lambda _event, _fields: None)
+        self.image_service = image_service
+
+    async def _inspect(self, name: str, arguments: dict[str, object]) -> str:
+        if name == "generate_image":
+            if self.image_service is None:
+                raise RequestFailure(
+                    "unsupported_capability", "Image generation is unavailable"
+                )
+            return self.image_service.target_identity
+        return await asyncio.to_thread(self.backend.inspect, name, arguments)
 
     def _log_invocation(self, event: str, invocation: ToolInvocation) -> None:
         fields: dict[str, str | int] = {
@@ -265,7 +313,7 @@ class ToolService:
             raise RequestFailure(
                 "unsupported_capability", "Tool capability is disabled"
             )
-        target = await asyncio.to_thread(self.backend.inspect, spec.name, arguments)
+        target = await self._inspect(spec.name, arguments)
         try:
             invocation = await self.store.run(
                 lambda: self.store.record_tool_proposal(
@@ -336,7 +384,7 @@ class ToolService:
             or digest != invocation.arguments_sha256
         ):
             raise RequestFailure("invalid_request", "Tool arguments changed")
-        target = await asyncio.to_thread(self.backend.inspect, spec.name, arguments)
+        target = await self._inspect(spec.name, arguments)
         if target != invocation.target_identity:
             raise RequestFailure("invalid_request", "Tool target or policy changed")
         try:
@@ -356,9 +404,7 @@ class ToolService:
                 await self._mark_unknown(invocation_id)
             raise
         try:
-            current_target = await asyncio.to_thread(
-                self.backend.inspect, spec.name, arguments
-            )
+            current_target = await self._inspect(spec.name, arguments)
             if (
                 current_target != target
                 or self.policy.version != invocation.policy_version
@@ -373,6 +419,36 @@ class ToolService:
         except BaseException:
             await _settle(asyncio.create_task(self._mark_unknown(invocation_id)))
             raise
+
+        if spec.name == "generate_image":
+            assert self.image_service is not None
+            try:
+                result = await self.image_service.run(invocation, arguments)
+            except AdmissionDenied:
+                error_receipt_json = _canonical(
+                    {"status": "not_executed", "code": "out_of_memory"}
+                )
+                error_result_json = _canonical(
+                    {"status": "error", "code": "out_of_memory"}
+                )
+                result = await self.store.run(
+                    lambda: self.store.commit_tool_result(
+                        invocation_id, error_receipt_json, error_result_json
+                    )
+                )
+                self._log_invocation("tool_complete", result)
+                return result
+            except BaseException:
+                current = await self.store.run(
+                    lambda: self.store.get_invocation(invocation_id)
+                )
+                if current.status is InvocationStatus.INTENT:
+                    await _settle(
+                        asyncio.create_task(self._mark_unknown(invocation_id))
+                    )
+                raise
+            self._log_invocation("tool_complete", result)
+            return result
 
         worker = asyncio.create_task(
             asyncio.to_thread(self.backend.execute, spec.name, arguments)

@@ -1,0 +1,15 @@
+[image_model]
+name = "sd15-512-v1"
+runtime_commit = "b0b743566f65daafc423b4fea8a2fbda94b3384a"
+root = "runtimes/comfyui-v0.39.0"
+python = "runtimes/comfyui-v0.39.0/.venv/Scripts/python.exe"
+checkpoint = "runtimes/comfyui-v0.39.0/models/checkpoints/v1-5-pruned-emaonly-fp16.safetensors"
+checkpoint_sha256 = "e9476a13728cd75d8279f6ec8bad753a66a1957ca375a1464dc63b37db6e3916"
+device_uuid = "GPU-REPLACE-WITH-YOUR-UUID"
+device_index = 0
+cold_vram_gib = 5.5
+cold_ram_gib = 6.0
+warm_vram_headroom_gib = 0.5
+warm_ram_headroom_gib = 0.5
+calibrated = false
+idle_seconds = 0.0

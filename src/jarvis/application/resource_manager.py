@@ -31,6 +31,41 @@ async def _settle[T](task: asyncio.Task[T]) -> T:
                 return task.result()
 
 
+class RuntimeRouter:
+    """Dispatch profiles through one ResourceManager and one device lock."""
+
+    def __init__(self, runtimes: dict[str, ManagedRuntime]) -> None:
+        self.runtimes = dict(runtimes)
+        self._generations: dict[int, ManagedRuntime] = {}
+
+    async def start(
+        self, profile: RuntimeProfile, generation: int, cancel: Event, job_name: str
+    ) -> RuntimeIdentity:
+        runtime = self.runtimes.get(profile.name)
+        if runtime is None:
+            raise ResourceUnavailable("Unknown heavy-runtime profile")
+        self._generations[generation] = runtime
+        return await runtime.start(profile, generation, cancel, job_name)
+
+    def _runtime(self, generation: int) -> ManagedRuntime:
+        try:
+            return self._generations[generation]
+        except KeyError as exc:
+            raise ResourceUnavailable("Unknown runtime generation") from exc
+
+    async def stop(self, identity: RuntimeIdentity) -> bool:
+        return await self._runtime(identity.generation).stop(identity)
+
+    async def abort_start(self, generation: int) -> bool:
+        return await self._runtime(generation).abort_start(generation)
+
+    async def wait_exit(self, identity: RuntimeIdentity) -> None:
+        await self._runtime(identity.generation).wait_exit(identity)
+
+    async def verify_stopped(self, identity: RuntimeIdentity) -> bool:
+        return await self._runtime(identity.generation).verify_stopped(identity)
+
+
 @dataclass(frozen=True)
 class ResourceView:
     state: ResourceState

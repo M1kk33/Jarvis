@@ -24,6 +24,7 @@ h2 { font-size: .86rem; text-transform: uppercase; letter-spacing: .06em; color:
 .message.user { background: #e4edff; }
 .message .role { font-size: .75rem; font-weight: 700; color: #58647a; margin-bottom: .4rem; }
 .message pre, .card pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 0; }
+.generated-image { display: block; width: min(100%, 512px); height: auto; margin: .8rem 0; border-radius: 8px; }
 .draft { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 1.8rem .6rem; color: #354464; font: inherit; }
 .composer { display: grid; gap: .5rem; padding: 1rem 1.8rem; background: white; border-top: 1px solid #e1e6ef; }
 .composer textarea, .setup-card input { width: 100%; border: 1px solid #bac6da; border-radius: 8px; padding: .75rem; background: #fff; color: #17223a; }

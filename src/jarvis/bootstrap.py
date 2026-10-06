@@ -11,16 +11,20 @@ import psutil
 from jarvis.application.calibration import calibrate
 from jarvis.application.context import ContextBuilder, PreflightTokenEstimator
 from jarvis.application.conversations import ConversationService
+from jarvis.application.images import ImageService
 from jarvis.application.jobs import JobRunner
-from jarvis.application.resource_manager import ResourceManager
+from jarvis.application.resource_manager import ResourceManager, RuntimeRouter
 from jarvis.application.tools import ToolPolicy, ToolService
 from jarvis.domain.ports import ChatProvider
+from jarvis.domain.resource_ports import ManagedRuntime
 from jarvis.domain.resources import ResourceError
 from jarvis.domain.types import ConversationError
 from jarvis.infrastructure.backup import create_backup, restore_backup
 from jarvis.infrastructure.diagnostics import Diagnostics
 from jarvis.infrastructure.gpu_lock import NamedGpuLock
+from jarvis.infrastructure.image_profile import LocalImageProfile
 from jarvis.infrastructure.local_profile import LocalTextProfile
+from jarvis.infrastructure.providers.comfyui import ComfyImageProvider, ComfyRuntime
 from jarvis.infrastructure.providers.fake import FakeChatProvider
 from jarvis.infrastructure.providers.llama_cpp import (
     LlamaChatProvider,
@@ -44,7 +48,10 @@ def main(argv: list[str] | None = None) -> int:
                 manager = None
                 provider: ChatProvider = FakeChatProvider()
                 profile: LocalTextProfile | None = None
+                image_profile: LocalImageProfile | None = None
                 probe = None
+                if args.image_profile and not args.profile:
+                    raise ValueError("Image profile requires the pinned text profile")
                 if args.command == "calibrate" and not args.profile:
                     raise ValueError("Calibration requires --profile")
                 if args.read_root and (
@@ -66,11 +73,33 @@ def main(argv: list[str] | None = None) -> int:
                         Path(args.profile), store.data_dir
                     )
                     runtime = LlamaServerRuntime(profile, store.data_dir / "run")
+                    runtimes: dict[str, ManagedRuntime] = {profile.name: runtime}
+                    if args.image_profile and args.command in {
+                        "send",
+                        "session",
+                        "resume-job",
+                        "web",
+                        "diagnostics",
+                    }:
+                        image_profile = LocalImageProfile.from_file(
+                            Path(args.image_profile), store.data_dir
+                        )
+                        if (
+                            image_profile.device_uuid != profile.device_uuid
+                            or image_profile.device_index != profile.device_index
+                        ):
+                            raise ValueError(
+                                "Text and image profiles must select the same device"
+                            )
+                        image_runtime = ComfyRuntime(
+                            image_profile, store.data_dir / "run"
+                        )
+                        runtimes[image_profile.name] = image_runtime
                     probe = NvidiaResourceProbe(
                         profile.device_uuid, profile.device_index
                     )
                     manager = ResourceManager(
-                        runtime,
+                        RuntimeRouter(runtimes),
                         probe,
                         NamedGpuLock(profile.device_uuid),
                         SystemClock(),
@@ -124,6 +153,16 @@ def main(argv: list[str] | None = None) -> int:
                                     if profile
                                     else None
                                 ),
+                                "image_profile": (
+                                    {
+                                        "name": image_profile.name,
+                                        "runtime_commit": image_profile.runtime_commit,
+                                        "checkpoint_sha256": image_profile.checkpoint_sha256,
+                                        "device_uuid": image_profile.device_uuid,
+                                    }
+                                    if image_profile is not None
+                                    else None
+                                ),
                                 "available_ram_gib": (
                                     sample.available_ram_gib
                                     if sample is not None
@@ -172,11 +211,22 @@ def main(argv: list[str] | None = None) -> int:
                     capabilities = {"clock"}
                     if args.read_root:
                         capabilities.add("read_files")
+                    image_service = None
+                    if image_profile is not None:
+                        assert manager is not None
+                        capabilities.add("image")
+                        image_service = ImageService(
+                            store,
+                            ComfyImageProvider(image_runtime),
+                            manager,
+                            image_profile.admission_profile(),
+                        )
                     tool_service = ToolService(
                         store,
                         backend,
                         ToolPolicy(capabilities=frozenset(capabilities)),
                         diagnostics,
+                        image_service=image_service,
                     )
                 service = ConversationService(
                     store,

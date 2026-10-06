@@ -85,6 +85,11 @@ if (setupForm) {
     messagesNode.replaceChildren();
     const turns = new Map(data.turns.map((turn) => [turn.id, turn]));
     const drafts = new Map(data.drafts.map((draft) => [draft.turn_id, draft]));
+    const artifacts = new Map();
+    for (const artifact of data.artifacts || []) {
+      if (!artifacts.has(artifact.turn_id)) artifacts.set(artifact.turn_id, []);
+      artifacts.get(artifact.turn_id).push(artifact);
+    }
     for (const message of data.messages) {
       const card = document.createElement("article");
       card.className = `message ${message.role}`;
@@ -102,6 +107,23 @@ if (setupForm) {
             partial.textContent = draft.text;
             card.append(partial);
           }
+        }
+        for (const artifact of artifacts.get(message.turn_id) || []) {
+          if (!/^[0-9a-f-]{36}$/.test(artifact.id) || artifact.kind !== "image/png") continue;
+          if (artifact.status !== "available") {
+            line(card, `Image ${artifact.id} is unavailable`, "subtle");
+            continue;
+          }
+          const preview = document.createElement("img");
+          preview.className = "generated-image";
+          preview.alt = `Generated image ${artifact.id}`;
+          preview.loading = "lazy";
+          preview.src = `/api/artifacts/${artifact.id}/preview`;
+          card.append(preview);
+          const download = document.createElement("a");
+          download.href = `/api/artifacts/${artifact.id}`;
+          download.textContent = `Download image ${artifact.id}`;
+          card.append(download);
         }
       }
       messagesNode.append(card);

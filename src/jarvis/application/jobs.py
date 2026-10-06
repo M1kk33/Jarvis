@@ -163,7 +163,7 @@ class JobRunner:
                 self.conversations.generate_existing_turn_async(
                     job.turn_id, job.conversation_id, signal, on_delta, job.attempt
                 ),
-                timeout=180,
+                timeout=600,
             )
             if signal.is_set():
                 return await self._settle_cancellation(job_id)

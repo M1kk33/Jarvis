@@ -342,9 +342,6 @@ class ConversationService:
             await self.store.run(lambda: self.store.get_invocations(turn_id))
         )
         handle = None
-        if self.resource_manager is not None:
-            assert self.runtime_profile is not None
-            handle = await self.resource_manager.acquire(self.runtime_profile)
         try:
             while True:
                 records: list[ContextRecord] = []
@@ -374,15 +371,33 @@ class ConversationService:
                 )
                 selected_groups = {item.group_id for item in selection.items}
                 selected = [r for r in records if r.turn_id in selected_groups]
-                selected = await self._fit_exact_tool_context(selected, schemas)
-                text, proposal = await self._consume_tool_stream(
-                    turn_id,
-                    selected,
-                    schemas,
-                    signal,
-                    on_delta,
-                    job_attempt,
-                )
+                if self.resource_manager is not None:
+                    assert self.runtime_profile is not None
+                    handle = await self.resource_manager.acquire(self.runtime_profile)
+                try:
+                    selected = await self._fit_exact_tool_context(selected, schemas)
+                    text, proposal = await self._consume_tool_stream(
+                        turn_id,
+                        selected,
+                        schemas,
+                        signal,
+                        on_delta,
+                        job_attempt,
+                    )
+                except BaseException:
+                    signal.set()
+                    if handle is not None:
+                        assert self.resource_manager is not None
+                        await _settle(
+                            asyncio.create_task(
+                                self.resource_manager.abort_request(handle)
+                            )
+                        )
+                    raise
+                finally:
+                    if handle is not None:
+                        await handle.release()
+                        handle = None
                 if proposal is None:
                     assert text is not None
                     return text
@@ -400,15 +415,7 @@ class ConversationService:
                     )
         except BaseException:
             signal.set()
-            if handle is not None:
-                assert self.resource_manager is not None
-                await _settle(
-                    asyncio.create_task(self.resource_manager.abort_request(handle))
-                )
             raise
-        finally:
-            if handle is not None:
-                await handle.release()
 
     async def _fit_exact_tool_context(
         self,

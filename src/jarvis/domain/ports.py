@@ -1,6 +1,7 @@
 """Backend-neutral application boundaries."""
 
 from collections.abc import Callable, Iterator, Sequence
+from pathlib import Path
 from threading import Event
 from typing import Protocol, TypeVar, runtime_checkable
 
@@ -124,6 +125,33 @@ class ToolStore(Protocol):
     ) -> ToolInvocation: ...
     def mark_tool_unknown(self, invocation_id: str) -> ToolInvocation: ...
     def assert_tool_intent_active(self, invocation_id: str) -> None: ...
+
+
+class ImageProvider(Protocol):
+    @property
+    def output_root(self) -> Path: ...
+    async def generate(
+        self, prompt: str, seed: int, invocation_id: str, cancel: Event
+    ) -> Path: ...
+
+
+class ImageStore(Protocol):
+    data_dir: Path
+
+    async def run(self, operation: Callable[[], T]) -> T: ...
+    def assert_tool_intent_active(self, invocation_id: str) -> None: ...
+    def get_invocation(self, invocation_id: str) -> ToolInvocation: ...
+    def set_image_progress(self, invocation_id: str, stage: str) -> None: ...
+    def commit_image_result(
+        self,
+        invocation_id: str,
+        artifact_id: str,
+        relative_path: str,
+        size_bytes: int,
+        sha256: str,
+        receipt_json: str,
+        result_json: str,
+    ) -> ToolInvocation: ...
 
 
 class JobStore(Protocol):
