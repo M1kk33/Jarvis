@@ -4,11 +4,13 @@ import asyncio
 import hashlib
 import json
 import re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
+from jarvis.application.file_creation import FileCreateService
 from jarvis.application.images import ImageService
 from jarvis.application.resource_manager import _settle
 from jarvis.domain.ports import ToolStore
@@ -31,6 +33,25 @@ class ToolSpec:
 
 
 SPECS = (
+    ToolSpec(
+        "create_text_file",
+        1,
+        {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "maxLength": 1024},
+                "content": {"type": "string", "maxLength": 8192},
+            },
+            "required": ["path", "content"],
+            "additionalProperties": False,
+        },
+        "write",
+        "write_files",
+        30,
+        8192,
+        True,
+        "never_without_reconciliation",
+    ),
     ToolSpec(
         "generate_image",
         1,
@@ -118,6 +139,8 @@ class ToolPolicy:
     def decision(self, spec: ToolSpec) -> str:
         if spec.capability not in self.capabilities:
             return "deny"
+        if spec.name == "create_text_file":
+            return "approval"
         return "approval" if spec.name in self.approval_required else "allow"
 
 
@@ -183,6 +206,7 @@ class ToolRegistry:
                 "function": {
                     "name": spec.name,
                     "description": {
+                        "create_text_file": "Create one UTF-8 .txt file in an explicitly granted directory after user approval; never overwrite.",
                         "generate_image": "Generate one local 512 x 512 PNG from a bounded prompt.",
                         "current_time": "Return the current UTC time.",
                         "list_directory": "List names in an approved local directory.",
@@ -207,7 +231,14 @@ class ToolRegistry:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", proposal.call_id):
             raise RequestFailure("invalid_request", "Invalid tool call ID")
         spec = self.get(proposal.name)
-        if len(proposal.arguments_json.encode("utf-8")) > 4096:
+        argument_limit = 32768 if spec.name == "create_text_file" else 4096
+        try:
+            argument_bytes = proposal.arguments_json.encode("utf-8")
+        except UnicodeError as exc:
+            raise RequestFailure(
+                "invalid_request", "Tool arguments are not UTF-8"
+            ) from exc
+        if len(argument_bytes) > argument_limit:
             raise RequestFailure("invalid_request", "Tool arguments are too large")
         try:
             value = json.loads(
@@ -222,6 +253,7 @@ class ToolRegistry:
         if type(value) is not dict:
             raise RequestFailure("invalid_request", "Tool arguments must be an object")
         allowed = {
+            "create_text_file": frozenset({"path", "content"}),
             "generate_image": frozenset({"prompt", "seed"}),
             "current_time": frozenset(),
             "list_directory": frozenset({"path"}),
@@ -229,7 +261,7 @@ class ToolRegistry:
         }[spec.name]
         if not value.keys() <= allowed:
             raise RequestFailure("invalid_request", "Unknown tool argument")
-        if spec.name in {"list_directory", "read_text_file"}:
+        if spec.name in {"list_directory", "read_text_file", "create_text_file"}:
             path = value.get("path")
             if type(path) is not str or not 1 <= len(path) <= 1024:
                 raise RequestFailure(
@@ -239,6 +271,28 @@ class ToolRegistry:
             limit = value["max_bytes"]
             if type(limit) is not int or not 1 <= limit <= 16384:
                 raise RequestFailure("invalid_request", "Invalid file byte limit")
+        if spec.name == "create_text_file":
+            path = value["path"]
+            assert type(path) is str
+            if any(unicodedata.category(char) in {"Cc", "Cf"} for char in path):
+                raise RequestFailure("invalid_request", "Text path has hidden controls")
+            content = value.get("content")
+            if type(content) is not str or any(
+                unicodedata.category(char) == "Cf"
+                or (unicodedata.category(char) == "Cc" and char not in "\t\n\r")
+                for char in content
+            ):
+                raise RequestFailure(
+                    "invalid_request", "Text content is invalid or too large"
+                )
+            try:
+                content_bytes = content.encode("utf-8")
+            except UnicodeError as exc:
+                raise RequestFailure("invalid_request", "Text is not UTF-8") from exc
+            if len(content_bytes) > 8192:
+                raise RequestFailure(
+                    "invalid_request", "Text content is invalid or too large"
+                )
         if spec.name == "generate_image":
             prompt = value.get("prompt")
             seed = value.get("seed", 0)
@@ -266,6 +320,7 @@ class ToolService:
         policy: ToolPolicy | None = None,
         diagnostics: Callable[[str, dict[str, str | int]], None] | None = None,
         image_service: ImageService | None = None,
+        file_service: FileCreateService | None = None,
     ) -> None:
         self.store = store
         self.backend = backend
@@ -273,8 +328,15 @@ class ToolService:
         self.registry = ToolRegistry()
         self.diagnostics = diagnostics or (lambda _event, _fields: None)
         self.image_service = image_service
+        self.file_service = file_service
 
     async def _inspect(self, name: str, arguments: dict[str, object]) -> str:
+        if name == "create_text_file":
+            if self.file_service is None:
+                raise RequestFailure(
+                    "unsupported_capability", "File creation is unavailable"
+                )
+            return await asyncio.to_thread(self.file_service.inspect, arguments)
         if name == "generate_image":
             if self.image_service is None:
                 raise RequestFailure(
@@ -298,8 +360,54 @@ class ToolService:
         )
         self._log_invocation("tool_unknown", invocation)
 
+    async def _complete_no_effect(
+        self, invocation_id: str, code: str
+    ) -> ToolInvocation:
+        receipt = _canonical({"status": "not_executed", "code": code})
+        result_json = _canonical({"status": "error", "code": code})
+        try:
+            return await _settle(
+                asyncio.create_task(
+                    self.store.run(
+                        lambda: self.store.commit_tool_result(
+                            invocation_id, receipt, result_json
+                        )
+                    )
+                )
+            )
+        except Exception:
+            current = await self.store.run(
+                lambda: self.store.get_invocation(invocation_id)
+            )
+            if current.status is InvocationStatus.COMPLETE:
+                return current
+            await _settle(asyncio.create_task(self._mark_unknown(invocation_id)))
+            raise
+
     def schemas(self) -> list[dict[str, object]]:
         return self.registry.schemas(self.policy.capabilities)
+
+    async def reconcile_file(self, invocation_id: str) -> ToolInvocation | None:
+        if self.file_service is None:
+            raise RequestFailure(
+                "unsupported_capability", "File reconciliation needs a write grant"
+            )
+        invocation = await self.store.run(
+            lambda: self.store.get_invocation(invocation_id)
+        )
+        if invocation.name != "create_text_file":
+            raise RequestFailure("invalid_request", "Invocation is not a file creation")
+        _, _, canonical, digest = self.registry.parse(
+            StreamToolCall(
+                invocation.model_call_id, invocation.name, invocation.arguments_json
+            )
+        )
+        if (
+            canonical != invocation.arguments_json
+            or digest != invocation.arguments_sha256
+        ):
+            raise RequestFailure("invalid_request", "Stored file arguments changed")
+        return await self.file_service.reconcile(invocation)
 
     async def propose_and_run(
         self,
@@ -313,6 +421,23 @@ class ToolService:
             raise RequestFailure(
                 "unsupported_capability", "Tool capability is disabled"
             )
+        if spec.name == "create_text_file":
+            prior = await self.store.run(
+                lambda: self.store.get_invocation_by_call(turn_id, proposal.call_id)
+            )
+            if prior is not None:
+                if (
+                    prior.name != spec.name
+                    or prior.version != spec.version
+                    or prior.arguments_sha256 != digest
+                ):
+                    raise RequestFailure("invalid_request", "Tool call ID was reused")
+                if prior.status is InvocationStatus.COMPLETE:
+                    return prior
+                if prior.status is InvocationStatus.OUTCOME_UNKNOWN:
+                    raise RequestFailure(
+                        "unavailable", "File outcome needs exact reconciliation"
+                    )
         target = await self._inspect(spec.name, arguments)
         try:
             invocation = await self.store.run(
@@ -384,9 +509,20 @@ class ToolService:
             or digest != invocation.arguments_sha256
         ):
             raise RequestFailure("invalid_request", "Tool arguments changed")
-        target = await self._inspect(spec.name, arguments)
-        if target != invocation.target_identity:
-            raise RequestFailure("invalid_request", "Tool target or policy changed")
+        try:
+            target = await self._inspect(spec.name, arguments)
+            if target != invocation.target_identity:
+                raise RequestFailure("invalid_request", "Tool target or policy changed")
+        except BaseException:
+            if spec.name == "create_text_file":
+                await _settle(
+                    asyncio.create_task(
+                        self.store.run(
+                            lambda: self.store.invalidate_tool_approval(invocation_id)
+                        )
+                    )
+                )
+            raise
         try:
             await self.store.run(
                 lambda: self.store.record_tool_intent(
@@ -397,11 +533,16 @@ class ToolService:
                 )
             )
         except asyncio.CancelledError:
-            current = await self.store.run(
-                lambda: self.store.get_invocation(invocation_id)
+            current = await _settle(
+                asyncio.create_task(
+                    self.store.run(lambda: self.store.get_invocation(invocation_id))
+                )
             )
             if current.status is InvocationStatus.INTENT:
-                await self._mark_unknown(invocation_id)
+                if spec.name == "create_text_file":
+                    await self._complete_no_effect(invocation_id, "cancelled")
+                else:
+                    await self._mark_unknown(invocation_id)
             raise
         try:
             current_target = await self._inspect(spec.name, arguments)
@@ -416,9 +557,34 @@ class ToolService:
             await self.store.run(
                 lambda: self.store.assert_tool_intent_active(invocation_id)
             )
-        except BaseException:
+        except BaseException as exc:
+            if spec.name == "create_text_file":
+                code = exc.code if isinstance(exc, RequestFailure) else "unavailable"
+                result = await self._complete_no_effect(invocation_id, code)
+                self._log_invocation("tool_complete", result)
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                return result
             await _settle(asyncio.create_task(self._mark_unknown(invocation_id)))
             raise
+
+        if spec.name == "create_text_file":
+            assert self.file_service is not None
+            try:
+                result = await self.file_service.run(invocation, arguments)
+            except BaseException:
+                current = await _settle(
+                    asyncio.create_task(
+                        self.store.run(lambda: self.store.get_invocation(invocation_id))
+                    )
+                )
+                if current.status is InvocationStatus.INTENT:
+                    await _settle(
+                        asyncio.create_task(self._mark_unknown(invocation_id))
+                    )
+                raise
+            self._log_invocation("tool_complete", result)
+            return result
 
         if spec.name == "generate_image":
             assert self.image_service is not None

@@ -199,24 +199,47 @@ if (setupForm) {
     const data = await api("/api/approvals");
     approvalsNode.replaceChildren();
     const visible = data.approvals;
-    if (!visible.length) line(approvalsNode, "Nothing needs approval.", "empty");
+    if (!visible.length && !(data.uncertain_files || []).length) line(approvalsNode, "Nothing needs approval.", "empty");
     for (const item of visible) {
       const card = document.createElement("div");
       card.className = "card";
       line(card, `${item.name} · version ${item.version}`);
       line(card, `Target: ${item.target}`, "subtle");
       line(card, `Job: ${item.job_id} · policy: ${item.policy_version}`, "subtle");
-      const argumentsText = document.createElement("pre");
-      argumentsText.textContent = item.arguments;
-      card.append(argumentsText);
-      card.append(button("Approve", async () => {
-        try { await api(`/api/approvals/${encodeURIComponent(item.invocation_id)}/approve`, "POST"); listen(item.job_id); await refreshApprovals(); }
-        catch (error) { say(error.message); }
-      }));
+      if (item.name === "create_text_file" && item.preview) {
+        line(card, `Create new file: ${item.preview.path}`);
+        line(card, "Exact UTF-8 content to write:");
+        const content = document.createElement("pre");
+        content.textContent = item.preview.content;
+        card.append(content);
+      } else {
+        const argumentsText = document.createElement("pre");
+        argumentsText.textContent = item.arguments;
+        card.append(argumentsText);
+      }
+      if (item.actionable) {
+        card.append(button("Approve", async () => {
+          try { await api(`/api/approvals/${encodeURIComponent(item.invocation_id)}/approve`, "POST"); listen(item.job_id); await refreshApprovals(); }
+          catch (error) { say(error.message); }
+        }));
+      } else {
+        line(card, "This approval expired or was invalidated. Cancel this job and make a new request.", "subtle");
+      }
       card.append(button("Reject", async () => {
         try { await api(`/api/approvals/${encodeURIComponent(item.invocation_id)}/reject`, "POST"); await refreshAll(); }
         catch (error) { say(error.message); }
       }, true));
+      approvalsNode.append(card);
+    }
+    for (const item of data.uncertain_files || []) {
+      const card = document.createElement("div");
+      card.className = "card";
+      line(card, `Uncertain file creation: ${item.path}`);
+      line(card, "Verification checks the exact expected file and content. It never creates the file.", "subtle");
+      card.append(button("Verify file", async () => {
+        try { await api(`/api/file-reconciliation/${encodeURIComponent(item.invocation_id)}`, "POST"); await refreshAll(); }
+        catch (error) { say(error.message); }
+      }));
       approvalsNode.append(card);
     }
   }

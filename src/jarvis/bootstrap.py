@@ -11,6 +11,7 @@ import psutil
 from jarvis.application.calibration import calibrate
 from jarvis.application.context import ContextBuilder, PreflightTokenEstimator
 from jarvis.application.conversations import ConversationService
+from jarvis.application.file_creation import FileCreateService
 from jarvis.application.images import ImageService
 from jarvis.application.jobs import JobRunner
 from jarvis.application.resource_manager import ResourceManager, RuntimeRouter
@@ -20,6 +21,7 @@ from jarvis.domain.resource_ports import ManagedRuntime
 from jarvis.domain.resources import ResourceError
 from jarvis.domain.types import ConversationError
 from jarvis.infrastructure.backup import create_backup, restore_backup
+from jarvis.infrastructure.create_tools import SafeFileCreator
 from jarvis.infrastructure.diagnostics import Diagnostics
 from jarvis.infrastructure.gpu_lock import NamedGpuLock
 from jarvis.infrastructure.image_profile import LocalImageProfile
@@ -61,6 +63,15 @@ def main(argv: list[str] | None = None) -> int:
                     raise ValueError(
                         "Read tools require a model session or send command"
                     )
+                if args.write_root and (
+                    args.command not in {"web", "reconcile-file"}
+                    or (args.command == "web" and not args.profile)
+                ):
+                    raise ValueError(
+                        "Write roots require a model-backed web session or reconciliation"
+                    )
+                if args.command == "reconcile-file" and not args.write_root:
+                    raise ValueError("File reconciliation requires --write-root")
                 if args.profile and args.command in {
                     "send",
                     "session",
@@ -199,11 +210,14 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     return 0
                 tool_service = None
-                if args.profile and args.command in {
+                if (
+                    args.profile or args.command == "reconcile-file"
+                ) and args.command in {
                     "send",
                     "session",
                     "resume-job",
                     "web",
+                    "reconcile-file",
                 }:
                     backend = SafeReadTools(
                         [Path(root) for root in args.read_root], store.data_dir
@@ -211,6 +225,15 @@ def main(argv: list[str] | None = None) -> int:
                     capabilities = {"clock"}
                     if args.read_root:
                         capabilities.add("read_files")
+                    file_service = None
+                    if args.write_root:
+                        capabilities.add("write_files")
+                        file_service = FileCreateService(
+                            store,
+                            SafeFileCreator(
+                                [Path(root) for root in args.write_root], store.data_dir
+                            ),
+                        )
                     image_service = None
                     if image_profile is not None:
                         assert manager is not None
@@ -224,10 +247,21 @@ def main(argv: list[str] | None = None) -> int:
                     tool_service = ToolService(
                         store,
                         backend,
-                        ToolPolicy(capabilities=frozenset(capabilities)),
+                        ToolPolicy(
+                            version="m9-v1" if file_service is not None else "m5-v1",
+                            capabilities=frozenset(capabilities),
+                        ),
                         diagnostics,
                         image_service=image_service,
+                        file_service=file_service,
                     )
+                if args.command == "reconcile-file":
+                    assert tool_service is not None
+                    result = asyncio.run(
+                        tool_service.reconcile_file(args.invocation_id)
+                    )
+                    print("reconciled" if result is not None else "unresolved")
+                    return 0
                 service = ConversationService(
                     store,
                     provider,

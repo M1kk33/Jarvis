@@ -27,6 +27,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=[],
         help="Explicit local directory that model read tools may inspect",
     )
+    parser.add_argument(
+        "--write-root",
+        action="append",
+        default=[],
+        help="Explicit local directory for approved create-only .txt files (web only)",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     create = commands.add_parser("create", help="Create a conversation")
@@ -54,6 +60,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     cancel.add_argument("job_id")
     resume_job = commands.add_parser("resume-job", help="Explicitly resume a job")
     resume_job.add_argument("job_id")
+    reconcile = commands.add_parser(
+        "reconcile-file", help="Verify an uncertain create-only file result"
+    )
+    reconcile.add_argument("invocation_id")
     commands.add_parser("backup", help="Create a verified data backup")
     restore = commands.add_parser("restore", help="Restore into --data-dir")
     restore.add_argument("backup_dir")

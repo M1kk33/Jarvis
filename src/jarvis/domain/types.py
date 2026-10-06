@@ -57,6 +57,10 @@ class ProviderFailure(RequestFailure):
     pass
 
 
+class NoEffectFailure(RequestFailure):
+    """The operation failed before any external side effect began."""
+
+
 class StorageFailure(ConversationError):
     pass
 

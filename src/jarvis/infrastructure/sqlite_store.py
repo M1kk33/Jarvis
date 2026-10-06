@@ -771,6 +771,15 @@ class SqliteStore:
         return self._approval(row) if row is not None else None
 
     @_on_owner
+    def invalidate_tool_approval(self, invocation_id: str) -> None:
+        with self._transaction():
+            self._conn.execute(
+                "UPDATE tool_approvals SET status='invalidated' "
+                "WHERE invocation_id=? AND status='issued'",
+                (invocation_id,),
+            )
+
+    @_on_owner
     def record_tool_intent(
         self,
         invocation_id: str,
@@ -868,6 +877,14 @@ class SqliteStore:
         return self._invocation(row)
 
     @_on_owner
+    def list_unknown_file_invocations(self) -> list[ToolInvocation]:
+        rows = self._conn.execute(
+            "SELECT * FROM tool_invocations WHERE name='create_text_file' "
+            "AND status='outcome_unknown' ORDER BY created_at, id"
+        ).fetchall()
+        return [self._invocation(row) for row in rows]
+
+    @_on_owner
     def assert_tool_intent_active(self, invocation_id: str) -> None:
         row = self._conn.execute(
             "SELECT i.status, i.job_id, i.job_attempt, t.status AS turn_status, "
@@ -920,6 +937,37 @@ class SqliteStore:
                     "UPDATE jobs SET next_step=?, progress='tool_complete', "
                     "updated_at=? WHERE id=? AND status='running' "
                     "AND cancel_requested=0",
+                    (row["ordinal"] + 1, _now(), row["job_id"]),
+                )
+        return self.get_invocation(invocation_id)
+
+    @_on_owner
+    def reconcile_tool_result(
+        self, invocation_id: str, receipt_json: str, result_json: str
+    ) -> ToolInvocation:
+        """Record a verified create-only postcondition without executing again."""
+        with self._transaction():
+            row = self._conn.execute(
+                "SELECT name, job_id, ordinal FROM tool_invocations "
+                "WHERE id=? AND status='outcome_unknown'",
+                (invocation_id,),
+            ).fetchone()
+            if row is None or row["name"] != "create_text_file":
+                raise StaleTurnError("File outcome is no longer uncertain")
+            self._conn.execute(
+                "UPDATE tool_invocations SET status='complete', receipt_json=?, "
+                "result_json=?, completed_at=? WHERE id=? AND status='outcome_unknown'",
+                (receipt_json, result_json, _now(), invocation_id),
+            )
+            if row["job_id"] is not None:
+                self._conn.execute(
+                    "UPDATE job_steps SET status='complete', updated_at=? "
+                    "WHERE invocation_id=? AND status='outcome_unknown'",
+                    (_now(), invocation_id),
+                )
+                self._conn.execute(
+                    "UPDATE jobs SET next_step=?, progress='file_reconciled', updated_at=? "
+                    "WHERE id=? AND status='interrupted' AND cancel_requested=0",
                     (row["ordinal"] + 1, _now(), row["job_id"]),
                 )
         return self.get_invocation(invocation_id)

@@ -7,6 +7,7 @@ import json
 import secrets
 from collections.abc import AsyncIterator
 from dataclasses import asdict
+from datetime import UTC, datetime
 from functools import partial
 from importlib import resources
 
@@ -400,6 +401,14 @@ def create_web_app(
                         invocation.status is InvocationStatus.WAITING_APPROVAL
                         and invocation.job_attempt == job.attempt
                     ):
+                        approval = await tool_service.store.run(
+                            partial(tool_service.store.get_tool_approval, invocation.id)
+                        )
+                        actionable = approval is None or (
+                            approval.status == "issued"
+                            and datetime.fromisoformat(approval.expires_at)
+                            > datetime.now(UTC)
+                        )
                         items.append(
                             {
                                 "invocation_id": invocation.id,
@@ -410,9 +419,38 @@ def create_web_app(
                                 "arguments": invocation.arguments_json,
                                 "target": invocation.target_identity,
                                 "policy_version": invocation.policy_version,
+                                "actionable": actionable,
+                                "preview": (
+                                    json.loads(invocation.arguments_json)
+                                    if invocation.name == "create_text_file"
+                                    else None
+                                ),
                             }
                         )
-        return {"approvals": items}
+        uncertain: list[dict[str, str]] = []
+        if tool_service is not None and tool_service.file_service is not None:
+            records = await service.store.run(
+                service.store.list_unknown_file_invocations
+            )
+            uncertain = [
+                {
+                    "invocation_id": item.id,
+                    "job_id": item.job_id or "",
+                    "path": json.loads(item.arguments_json)["path"],
+                }
+                for item in records
+            ]
+        return {"approvals": items, "uncertain_files": uncertain}
+
+    @app.post("/api/file-reconciliation/{invocation_id}")
+    async def reconcile_file(request: Request, invocation_id: str):
+        authorize(request, mutate=True)
+        if tool_service is None or tool_service.file_service is None:
+            raise HTTPException(404)
+        result = await tool_service.reconcile_file(invocation_id)
+        if result is None:
+            raise HTTPException(409, "Exact file and hash were not verified")
+        return {"invocation_id": result.id, "status": result.status.value}
 
     @app.post("/api/approvals/{invocation_id}/approve")
     async def approve(request: Request, invocation_id: str):
