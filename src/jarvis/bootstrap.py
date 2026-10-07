@@ -15,6 +15,7 @@ from jarvis.application.file_creation import FileCreateService
 from jarvis.application.images import ImageService
 from jarvis.application.jobs import JobRunner
 from jarvis.application.resource_manager import ResourceManager, RuntimeRouter
+from jarvis.application.speech import SpeechService
 from jarvis.application.tools import ToolPolicy, ToolService
 from jarvis.domain.ports import ChatProvider
 from jarvis.domain.resource_ports import ManagedRuntime
@@ -34,6 +35,8 @@ from jarvis.infrastructure.providers.llama_cpp import (
 )
 from jarvis.infrastructure.read_tools import SafeReadTools
 from jarvis.infrastructure.resource_probe import NvidiaResourceProbe, SystemClock
+from jarvis.infrastructure.speech import CpuSpeechTranscriber, SystemRamProbe
+from jarvis.infrastructure.speech_profile import SpeechProfile
 from jarvis.infrastructure.sqlite_store import SqliteStore
 from jarvis.interfaces.cli import dispatch, parse_args
 
@@ -54,6 +57,8 @@ def main(argv: list[str] | None = None) -> int:
                 probe = None
                 if args.image_profile and not args.profile:
                     raise ValueError("Image profile requires the pinned text profile")
+                if args.speech_profile and args.command != "web":
+                    raise ValueError("Speech profile is available only in web")
                 if args.command == "calibrate" and not args.profile:
                     raise ValueError("Calibration requires --profile")
                 if args.read_root and (
@@ -294,8 +299,22 @@ def main(argv: list[str] | None = None) -> int:
 
                     from jarvis.interfaces.web import create_web_app
 
+                    speech = None
+                    if args.speech_profile:
+                        speech_profile = SpeechProfile.from_file(
+                            Path(args.speech_profile), store.data_dir
+                        )
+                        speech_profile.verify_artifacts()
+                        speech = SpeechService(
+                            CpuSpeechTranscriber(
+                                speech_profile, store.data_dir / "run" / "speech"
+                            ),
+                            SystemRamProbe(),
+                            manager,
+                        )
+
                     app, setup_token = create_web_app(
-                        service, runner, tool_service, args.port
+                        service, runner, tool_service, args.port, speech
                     )
                     print(f"Open http://127.0.0.1:{args.port}/setup")
                     print(f"One-time setup token: {setup_token}", flush=True)
@@ -316,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
                         try:
                             await server.serve()
                         finally:
+                            if speech is not None:
+                                await speech.cancel()
                             await runner.wait_for_idle()
                             if manager is not None:
                                 await manager.close()

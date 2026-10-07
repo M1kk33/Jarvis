@@ -23,9 +23,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from jarvis.application.conversations import ConversationService
 from jarvis.application.images import validate_png
 from jarvis.application.jobs import JobRunner
+from jarvis.application.speech import MAX_CLIP_BYTES, SpeechService
 from jarvis.application.tools import ToolService
 from jarvis.domain.jobs import TERMINAL_JOBS, Job, JobStatus
 from jarvis.domain.resources import ResourceError
+from jarvis.domain.speech import SpeechInvalid, SpeechUnavailable
 from jarvis.domain.tools import InvocationStatus, ToolInvocation
 from jarvis.domain.types import (
     ConversationError,
@@ -112,6 +114,7 @@ def create_web_app(
     runner: JobRunner,
     tool_service: ToolService | None,
     port: int,
+    speech: SpeechService | None = None,
 ) -> tuple[FastAPI, str]:
     """Create an isolated session; the bootstrap binds it to 127.0.0.1 only."""
     origin = f"http://127.0.0.1:{port}"
@@ -143,7 +146,11 @@ def create_web_app(
             return Response(status_code=411)
         if length is not None:
             try:
-                if int(length) > BODY_LIMIT:
+                if int(length) > (
+                    MAX_CLIP_BYTES
+                    if request.url.path == "/api/transcribe"
+                    else BODY_LIMIT
+                ):
                     return Response(status_code=413)
             except ValueError:
                 return Response(status_code=400)
@@ -186,6 +193,38 @@ def create_web_app(
     @app.exception_handler(ResourceError)
     async def resource_error(_request: Request, exc: ResourceError):
         return JSONResponse({"detail": str(exc)}, status_code=503)
+
+    @app.exception_handler(SpeechInvalid)
+    async def speech_invalid(_request: Request, exc: SpeechInvalid):
+        return JSONResponse({"detail": str(exc)}, status_code=422)
+
+    @app.exception_handler(SpeechUnavailable)
+    async def speech_unavailable(_request: Request, exc: SpeechUnavailable):
+        return JSONResponse({"detail": str(exc)}, status_code=503)
+
+    @app.post("/api/transcribe")
+    async def transcribe(request: Request):
+        authorize(request, mutate=True)
+        if speech is None:
+            raise HTTPException(404, "Speech is not configured")
+        media_type = request.headers.get("content-type", "").split(";", 1)[0].lower()
+        clip = bytearray()
+        async for chunk in request.stream():
+            clip.extend(chunk)
+            if len(clip) > MAX_CLIP_BYTES:
+                raise HTTPException(413, "Audio clip is too large")
+        try:
+            text = await speech.transcribe(bytes(clip), media_type)
+        except asyncio.CancelledError:
+            return JSONResponse({"detail": "Transcription cancelled"}, status_code=409)
+        return {"text": text}
+
+    @app.post("/api/transcribe/cancel")
+    async def cancel_transcription(request: Request):
+        authorize(request, mutate=True)
+        if speech is None:
+            raise HTTPException(404, "Speech is not configured")
+        return {"cancelled": await speech.cancel()}
 
     @app.get("/setup")
     async def setup_page(request: Request):
@@ -253,7 +292,7 @@ def create_web_app(
     @app.get("/api/session")
     async def session(request: Request):
         authorize(request)
-        return {"csrf_token": csrf_token}
+        return {"csrf_token": csrf_token, "speech_enabled": speech is not None}
 
     @app.get("/api/conversations")
     async def conversations(request: Request):

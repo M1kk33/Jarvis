@@ -29,6 +29,10 @@ h2 { font-size: .86rem; text-transform: uppercase; letter-spacing: .06em; color:
 .composer { display: grid; gap: .5rem; padding: 1rem 1.8rem; background: white; border-top: 1px solid #e1e6ef; }
 .composer textarea, .setup-card input { width: 100%; border: 1px solid #bac6da; border-radius: 8px; padding: .75rem; background: #fff; color: #17223a; }
 .composer button { justify-self: end; }
+.speech-controls { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.speech-controls[hidden], .speech-controls button[hidden] { display: none; }
+.speech-controls button { justify-self: auto; }
+.speech-controls span { color: #58647a; font-size: .88rem; }
 .notice { min-height: 1.2rem; color: #8b302c; margin: .4rem 1.8rem; font-size: .9rem; }
 .card { border: 1px solid #e1e6ef; border-radius: 10px; padding: .85rem; margin-bottom: .65rem; overflow-wrap: anywhere; }
 .card .subtle { color: #66748d; font-size: .78rem; }

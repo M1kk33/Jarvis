@@ -1,6 +1,8 @@
 """One serialized heavy-runtime slot, independent of conversation/job scheduling."""
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from threading import Event
 from typing import Self
@@ -121,6 +123,7 @@ class ResourceManager:
         self._lock_held = False
         self._own_spawn_intent = False
         self._closed = False
+        self._cpu_worker = False
 
     @property
     def view(self) -> ResourceView:
@@ -135,7 +138,7 @@ class ResourceManager:
     async def acquire(self, profile: RuntimeProfile) -> OperationHandle:
         caller = asyncio.current_task()
         async with self._condition:
-            while self._state is ResourceState.BUSY:
+            while self._state is ResourceState.BUSY or self._cpu_worker:
                 if caller is self._owner_task:
                     raise ResourceUnavailable(
                         "Nested heavy-runtime acquisition is forbidden"
@@ -160,6 +163,25 @@ class ResourceManager:
             self._owner_task = caller
             self._state = ResourceState.BUSY
             return OperationHandle(self, self._generation, self._request_id)
+
+    @asynccontextmanager
+    async def cpu_worker(self) -> AsyncIterator[None]:
+        """Keep heavy requests and model switches out of a CPU worker's RAM peak."""
+        async with self._condition:
+            while self._state is ResourceState.BUSY or self._cpu_worker:
+                await self._condition.wait()
+            if self._closed or self._state is ResourceState.UNAVAILABLE:
+                raise ResourceUnavailable("Heavy-runtime cleanup is unverified")
+            self._cpu_worker = True
+        try:
+            yield
+        finally:
+            await _settle(asyncio.create_task(self._release_cpu_worker()))
+
+    async def _release_cpu_worker(self) -> None:
+        async with self._condition:
+            self._cpu_worker = False
+            self._condition.notify_all()
 
     async def _start_locked(self, profile: RuntimeProfile) -> None:
         self._state = ResourceState.STARTING
@@ -416,6 +438,8 @@ class ResourceManager:
         needs_recovery = False
         async with self._condition:
             self._closed = True
+            while self._cpu_worker:
+                await self._condition.wait()
             self._cancel_idle()
             if self._state in {
                 ResourceState.READY,

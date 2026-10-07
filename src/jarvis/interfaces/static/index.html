@@ -28,6 +28,12 @@
       <form id="send-form" class="composer">
         <label for="message-input">Your message</label>
         <textarea id="message-input" rows="3" maxlength="65536" required></textarea>
+        <div id="speech-controls" class="speech-controls" hidden>
+          <button id="record-button" type="button" class="quiet">Record</button>
+          <button id="stop-recording" type="button" hidden>Stop recording</button>
+          <button id="cancel-transcription" type="button" class="quiet" hidden>Cancel transcription</button>
+          <span id="speech-status" role="status"></span>
+        </div>
         <button id="send-button" type="submit">Send</button>
       </form>
       <p id="notice" class="notice" role="status"></p>

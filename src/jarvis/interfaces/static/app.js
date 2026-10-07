@@ -41,6 +41,15 @@ if (setupForm) {
   const approvalsNode = document.getElementById("approvals");
   const titleNode = document.getElementById("conversation-title");
   const inputNode = document.getElementById("message-input");
+  const speechControls = document.getElementById("speech-controls");
+  const recordButton = document.getElementById("record-button");
+  const stopRecording = document.getElementById("stop-recording");
+  const cancelTranscription = document.getElementById("cancel-transcription");
+  const speechStatus = document.getElementById("speech-status");
+  let recorder = null;
+  let microphone = null;
+  let recordTimer = null;
+  let discardTranscript = false;
 
   async function api(path, method = "GET", payload = undefined) {
     const headers = {};
@@ -281,8 +290,93 @@ if (setupForm) {
     finally { sendButton.disabled = false; }
   });
 
+  function releaseMicrophone() {
+    clearTimeout(recordTimer);
+    if (microphone) microphone.getTracks().forEach((track) => track.stop());
+    microphone = null;
+    recorder = null;
+    recordButton.hidden = false;
+    stopRecording.hidden = true;
+  }
+
+  recordButton.addEventListener("click", async () => {
+    if (!navigator.mediaDevices || !window.MediaRecorder) {
+      speechStatus.textContent = "Microphone recording is unavailable in this browser.";
+      return;
+    }
+    const mimeType = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus"]
+      .find((type) => MediaRecorder.isTypeSupported(type));
+    if (!mimeType) {
+      speechStatus.textContent = "This browser has no supported audio recorder.";
+      return;
+    }
+    recordButton.disabled = true;
+    try {
+      microphone = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const chunks = [];
+      recorder = new MediaRecorder(microphone, { mimeType });
+      recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+      recorder.onstop = async () => {
+        releaseMicrophone();
+        const clip = new Blob(chunks, { type: mimeType });
+        if (!clip.size || clip.size > 3 * 1024 * 1024) {
+          speechStatus.textContent = "Recording is empty or too large.";
+          return;
+        }
+        cancelTranscription.hidden = false;
+        discardTranscript = false;
+        speechStatus.textContent = "Transcribing locally…";
+        try {
+          const response = await fetch("/api/transcribe", {
+            method: "POST", credentials: "same-origin",
+            headers: { "Content-Type": mimeType, "X-CSRF-Token": state.csrf },
+            body: clip,
+          });
+          const result = await responseJson(response);
+          if (discardTranscript) return;
+          if (!result.text) {
+            speechStatus.textContent = "No speech detected. Nothing was sent.";
+          } else {
+            inputNode.value = [inputNode.value.trim(), result.text].filter(Boolean).join("\n");
+            inputNode.focus();
+            speechStatus.textContent = "Review and edit the transcript, then press Send.";
+          }
+        } catch (error) { speechStatus.textContent = error.message; }
+        finally { cancelTranscription.hidden = true; }
+      };
+      recorder.start();
+      speechStatus.textContent = "Recording (up to 19 seconds).";
+      recordButton.hidden = true;
+      stopRecording.hidden = false;
+      recordTimer = setTimeout(() => { if (recorder?.state === "recording") recorder.stop(); }, 19000);
+    } catch (error) {
+      releaseMicrophone();
+      speechStatus.textContent = "Microphone access was denied or unavailable.";
+    } finally { recordButton.disabled = false; }
+  });
+  stopRecording.addEventListener("click", () => {
+    if (recorder?.state === "recording") recorder.stop();
+  });
+  cancelTranscription.addEventListener("click", async () => {
+    discardTranscript = true;
+    cancelTranscription.disabled = true;
+    try {
+      await api("/api/transcribe/cancel", "POST");
+      speechStatus.textContent = "Transcription cancelled. Nothing was sent.";
+    } catch (error) { speechStatus.textContent = error.message; }
+    finally { cancelTranscription.disabled = false; cancelTranscription.hidden = true; }
+  });
+  window.addEventListener("pagehide", () => {
+    if (recorder) {
+      recorder.onstop = null;
+      if (recorder.state === "recording") recorder.stop();
+    }
+    releaseMicrophone();
+  });
+
   api("/api/session").then((session) => {
     state.csrf = session.csrf_token;
+    speechControls.hidden = !session.speech_enabled;
     return refreshAll();
   }).catch((error) => say(error.message));
 }

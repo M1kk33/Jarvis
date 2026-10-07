@@ -21,6 +21,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--image-profile", help="Pinned local SD 1.5 image profile; requires --profile"
     )
+    parser.add_argument("--speech-profile", help="Pinned CPU speech profile (web only)")
     parser.add_argument(
         "--read-root",
         action="append",

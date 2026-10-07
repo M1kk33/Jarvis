@@ -1,0 +1,11 @@
+[speech]
+name = "faster-whisper-base-cpu-int8"
+version = "1.2.1"
+python = "E:/JarvisData/runtimes/speech-base/Scripts/python.exe"
+model_dir = "E:/JarvisData/models/speech-base"
+model_sha256 = "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9"
+tokenizer_sha256 = "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab"
+config_sha256 = "56a6d8110d311f19c8f0471e562832c7527f146b567275bfca59fcf7c184da9a"
+vocabulary_sha256 = "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+ram_peak_gib = 1.5
+cpu_threads = 4

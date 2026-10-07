@@ -292,6 +292,10 @@ class _TailReader:
     def text(self) -> str:
         return bytes(self._tail).decode("utf-8", errors="replace")
 
+    def wait_eof(self, timeout: float) -> bool:
+        self._thread.join(timeout)
+        return not self._thread.is_alive()
+
 
 class OwnedProcess:
     def __init__(
@@ -474,6 +478,7 @@ class WindowsProcessSupervisor:
         environment: dict[str, str],
         after_create: Callable[[int, int], None] | None = None,
         job_name: str | None = None,
+        stdin_data: bytes | None = None,
     ) -> OwnedProcess:
         executable = executable.resolve(strict=True)
         cwd = cwd.resolve(strict=True)
@@ -490,6 +495,7 @@ class WindowsProcessSupervisor:
         stdout_read = stderr_read = -1
         stdout_write = stderr_write = -1
         input_file = None
+        stdin_read = stdin_write = -1
         attribute_list = None
         try:
             _check(
@@ -503,11 +509,18 @@ class WindowsProcessSupervisor:
             )
             stdout_read, stdout_write = os.pipe()
             stderr_read, stderr_write = os.pipe()
-            input_file = open(os.devnull, "rb")  # noqa: SIM115 - closed in finally
-            for fd in (stdout_write, stderr_write, input_file.fileno()):
+            if stdin_data is None:
+                input_file = open(os.devnull, "rb")  # noqa: SIM115 - closed in finally
+                input_handle = input_file.fileno()
+            else:
+                if len(stdin_data) > 4096:
+                    raise ValueError("Worker request is too large")
+                stdin_read, stdin_write = os.pipe()
+                input_handle = stdin_read
+            for fd in (stdout_write, stderr_write, input_handle):
                 os.set_inheritable(fd, True)
             handles = (_HANDLE * 3)(
-                msvcrt.get_osfhandle(input_file.fileno()),
+                msvcrt.get_osfhandle(input_handle),
                 msvcrt.get_osfhandle(stdout_write),
                 msvcrt.get_osfhandle(stderr_write),
             )
@@ -586,11 +599,23 @@ class WindowsProcessSupervisor:
             created = process_creation_time(process_info.hProcess)
             if after_create is not None:
                 after_create(process_info.dwProcessId, created)
+            if stdin_data is not None:
+                os.close(stdin_read)
+                stdin_read = -1
+                pending = memoryview(stdin_data)
+                while pending:
+                    written = os.write(stdin_write, pending)
+                    if written <= 0:
+                        raise OSError("Cannot write worker request")
+                    pending = pending[written:]
+                os.close(stdin_write)
+                stdin_write = -1
             os.close(stdout_write)
             os.close(stderr_write)
             stdout_write = stderr_write = -1
-            input_file.close()
-            input_file = None
+            if input_file is not None:
+                input_file.close()
+                input_file = None
             stdout = _TailReader(stdout_read)
             stderr = _TailReader(stderr_read)
             stdout_read = stderr_read = -1
@@ -612,7 +637,14 @@ class WindowsProcessSupervisor:
         finally:
             if attribute_list is not None:
                 _kernel.DeleteProcThreadAttributeList(attribute_list)
-            for fd in (stdout_read, stdout_write, stderr_read, stderr_write):
+            for fd in (
+                stdout_read,
+                stdout_write,
+                stderr_read,
+                stderr_write,
+                stdin_read,
+                stdin_write,
+            ):
                 if fd >= 0:
                     os.close(fd)
             if input_file is not None:
