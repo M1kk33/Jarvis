@@ -15,6 +15,8 @@ if (-not (Test-Path -LiteralPath $pythonConsole -PathType Leaf)) {
 if ($EnableBrowser -and -not $EnableNetwork) {
     throw 'EnableBrowser requires EnableNetwork.'
 }
+& $pythonConsole (Join-Path $PSScriptRoot 'repair-launch-environment.py')
+if ($LASTEXITCODE -ne 0) { throw 'Could not verify the physical Python environment.' }
 # These arguments are passed directly to pythonw, never evaluated by a shell.
 $launchArgs = @('"' + $entry + '"', '--data-dir', '"' + $privateDir + '"')
 $profiles = @(

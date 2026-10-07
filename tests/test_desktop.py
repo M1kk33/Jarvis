@@ -250,3 +250,59 @@ def test_shortcut_wrapper_bypasses_missing_venv_redirector(tmp_path):
         assert value["input"] == literal
     finally:
         assert process.stop(0, 10)
+
+
+def test_physical_python_home_repair_preserves_other_configuration(tmp_path):
+    helper = runpy.run_path(
+        str(Path(__file__).parents[1] / "scripts" / "repair-launch-environment.py")
+    )
+    physical = tmp_path / "physical Python"
+    physical.mkdir()
+    for name in ("python.exe", "pythonw.exe"):
+        (physical / name).write_bytes(b"fixture")
+    config = tmp_path / "pyvenv.cfg"
+    suffix = b"version_info = 3.12.13\r\ninclude-system-site-packages = false\r\n"
+    config.write_bytes(b"home = C:\\virtual-AppData\\Python\r\n" + suffix)
+    assert helper["repair_home"](config, physical)
+    assert config.read_bytes() == f"home = {physical}\r\n".encode() + suffix
+    assert not helper["repair_home"](config, physical)
+    assert not list(tmp_path.glob(".jarvis-python-*.tmp"))
+
+
+def test_physical_python_home_repair_rejects_missing_interpreter(tmp_path):
+    helper = runpy.run_path(
+        str(Path(__file__).parents[1] / "scripts" / "repair-launch-environment.py")
+    )
+    config = tmp_path / "pyvenv.cfg"
+    original = b"home = C:\\virtual-AppData\\Python\n"
+    config.write_bytes(original)
+    with pytest.raises(RuntimeError, match="required executable"):
+        helper["repair_home"](config, tmp_path / "missing")
+    assert config.read_bytes() == original
+
+
+def test_packaged_editor_home_uses_native_image_path(tmp_path, monkeypatch):
+    import psutil
+
+    physical = tmp_path / "Packages" / "editor" / "LocalCache" / "Python"
+    physical.mkdir(parents=True)
+    for name in ("python.exe", "pythonw.exe"):
+        (physical / name).write_bytes(b"fixture")
+    venv = tmp_path / ".venv"
+    venv.mkdir()
+    virtual_home = r"C:\Users\User\AppData\Roaming\uv\Python"
+    config = venv / "pyvenv.cfg"
+    config.write_text(f"home = {virtual_home}\n", encoding="utf-8")
+
+    class NativeProcess:
+        def exe(self):
+            return str(physical / "python.exe")
+
+    monkeypatch.setattr(psutil, "Process", NativeProcess)
+    monkeypatch.setattr(sys, "prefix", str(venv))
+    monkeypatch.setattr(sys, "base_prefix", virtual_home)
+    runpy.run_path(
+        str(Path(__file__).parents[1] / "scripts" / "repair-launch-environment.py"),
+        run_name="__main__",
+    )
+    assert config.read_text(encoding="utf-8") == f"home = {physical}\n"
