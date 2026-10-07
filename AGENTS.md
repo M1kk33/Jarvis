@@ -1,6 +1,6 @@
 # Jarvis implementation rules
 
-- Work only on the assigned milestone in `ARCHITECTURE.md`. M14 adds one approved exact-URL HTML retrieval rendered in a disposable, network-disabled Playwright worker, with bounded DOM text and a private screenshot. Do not add logged-in automation, form submission, messages, model-supplied JavaScript, desktop control, or broader browsing scopes.
+- Work only on the assigned milestone in `ARCHITECTURE.md`. M15 adds explicit user-managed memories and local document grants/imports, SQLite FTS5 retrieval with provenance, source invalidation, and bounded untrusted context. Do not add automatic life logging, speculative memory extraction, vector search, embeddings, knowledge graphs, or background filesystem crawling.
 - Keep the direction `interfaces -> application -> domain`; infrastructure implements domain contracts, and bootstrap alone wires concrete classes. Core imports must need no GPU, model, network, or inference package.
 - SQLite owns conversation and turn state. Submission and final reply each commit atomically with their turn transition. One database thread owns the connection; cancellation of an await requires outcome verification by stable identity. Check expected state before completion and acknowledge only committed results.
 - Preserve incomplete and failed turns. A reused submission ID must not call the provider again or create messages; changed text with the same ID is an error.

@@ -2,11 +2,13 @@
 
 import argparse
 import asyncio
+from pathlib import Path
 from uuid import uuid4
 
 from jarvis.application.conversations import ConversationService
 from jarvis.application.jobs import JobRunner
 from jarvis.application.resource_manager import ResourceManager
+from jarvis.application.retrieval import RetrievalService
 from jarvis.domain.types import ConversationError, SendResult
 
 
@@ -84,6 +86,45 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     restore.add_argument("backup_dir")
     commands.add_parser("diagnostics", help="Show local status and recent failures")
     commands.add_parser("calibrate", help="Measure the pinned local model on this PC")
+    root_add = commands.add_parser(
+        "retrieval-root-add", help="Grant one local document directory"
+    )
+    root_add.add_argument("path")
+    root_add.add_argument("--conversation-id")
+    commands.add_parser("retrieval-root-list", help="List document grants")
+    root_revoke = commands.add_parser(
+        "retrieval-root-revoke", help="Revoke a document grant"
+    )
+    root_revoke.add_argument("root_id")
+    memory_add = commands.add_parser("memory-add", help="Save an explicit memory")
+    memory_add.add_argument("text")
+    memory_add.add_argument("--conversation-id")
+    memory_list = commands.add_parser("memory-list", help="Inspect saved memories")
+    memory_list.add_argument("--conversation-id")
+    memory_edit = commands.add_parser("memory-edit", help="Edit an explicit memory")
+    memory_edit.add_argument("memory_id")
+    memory_edit.add_argument("text")
+    memory_delete = commands.add_parser("memory-delete", help="Delete a memory")
+    memory_delete.add_argument("memory_id")
+    document_import = commands.add_parser(
+        "document-import", help="Index one granted text document"
+    )
+    document_import.add_argument("root_id")
+    document_import.add_argument("path")
+    commands.add_parser("document-list", help="Inspect indexed documents")
+    document_reindex = commands.add_parser(
+        "document-reindex", help="Refresh one document"
+    )
+    document_reindex.add_argument("document_id")
+    document_delete = commands.add_parser(
+        "document-delete", help="Delete one indexed document"
+    )
+    document_delete.add_argument("document_id")
+    retrieve = commands.add_parser(
+        "retrieve", help="Inspect cited results for a question"
+    )
+    retrieve.add_argument("conversation_id")
+    retrieve.add_argument("question")
     return parser.parse_args(argv)
 
 
@@ -92,8 +133,64 @@ def dispatch(
     service: ConversationService,
     manager: ResourceManager | None = None,
     runner: JobRunner | None = None,
+    retrieval: RetrievalService | None = None,
 ) -> int:
-    if args.command == "create":
+    if args.command in {
+        "retrieval-root-add",
+        "retrieval-root-list",
+        "retrieval-root-revoke",
+        "memory-add",
+        "memory-list",
+        "memory-edit",
+        "memory-delete",
+        "document-import",
+        "document-list",
+        "document-reindex",
+        "document-delete",
+        "retrieve",
+    }:
+        assert retrieval is not None
+        if args.command == "retrieval-root-add":
+            print(retrieval.grant_root(Path(args.path), args.conversation_id).id)
+        elif args.command == "retrieval-root-list":
+            for item in retrieval.roots():
+                print(
+                    f"{item.id}\t{'active' if item.active else 'revoked'}"
+                    f"\t{item.conversation_id or 'global'}\t{item.path}"
+                )
+        elif args.command == "retrieval-root-revoke":
+            retrieval.revoke_root(args.root_id)
+            print("revoked")
+        elif args.command == "memory-add":
+            print(retrieval.add_memory(args.text, args.conversation_id).id)
+        elif args.command == "memory-list":
+            for memory in retrieval.memories(args.conversation_id):
+                print(
+                    f"{memory.id}\t{memory.conversation_id or 'global'}\t{memory.text}"
+                )
+        elif args.command == "memory-edit":
+            print(retrieval.edit_memory(args.memory_id, args.text).id)
+        elif args.command == "memory-delete":
+            retrieval.delete_memory(args.memory_id)
+            print("deleted")
+        elif args.command == "document-import":
+            print(retrieval.import_document(args.root_id, Path(args.path)).id)
+        elif args.command == "document-list":
+            for document in retrieval.documents():
+                print(f"{document.id}\t{document.status}\t{document.path}")
+        elif args.command == "document-reindex":
+            print(retrieval.reindex_document(args.document_id).id)
+        elif args.command == "document-delete":
+            retrieval.delete_document(args.document_id)
+            print("deleted")
+        else:
+            for hit in asyncio.run(
+                retrieval.search(args.question, args.conversation_id)
+            ):
+                print(
+                    f"{hit.kind}:{hit.source_id}#{hit.location}\t{hit.path or 'user memory'}\n{hit.text}"
+                )
+    elif args.command == "create":
         print(service.create(args.title).id)
     elif args.command == "list":
         for conversation in service.list_conversations():

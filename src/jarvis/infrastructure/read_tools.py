@@ -314,3 +314,60 @@ class SafeReadTools:
                 os.close(fd)
             return {"path": path, "text": text, "trust": "untrusted"}
         raise RequestFailure("unsupported_capability", "Unknown tool")
+
+    def read_document(self, raw_path: str) -> bytes:
+        """Read one explicitly imported UTF-8 document through a checked handle."""
+        path = self._allowed(raw_path)
+        if Path(path).suffix.lower() not in {".txt", ".md"}:
+            raise RequestFailure(
+                "invalid_request", "Only .txt and .md documents can be indexed"
+            )
+        limit = 256 * 1024
+        before = self._identity(path, directory=False)
+        fd = os.open(path, os.O_RDONLY | os.O_BINARY)
+        try:
+            final = _final_path(msvcrt.get_osfhandle(fd))
+            info = os.fstat(fd)
+            if (
+                ntpath.normcase(ntpath.normpath(final)) != ntpath.normcase(path)
+                or not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or info.st_size > limit
+            ):
+                raise RequestFailure(
+                    "invalid_request", "Document target or size is invalid"
+                )
+            data = os.read(fd, limit + 1)
+            after = os.fstat(fd)
+            if len(data) != info.st_size or (info.st_size, info.st_mtime_ns) != (
+                after.st_size,
+                after.st_mtime_ns,
+            ):
+                raise RequestFailure("unavailable", "Document changed while reading")
+        finally:
+            os.close(fd)
+        if self._identity(path, directory=False) != before:
+            raise RequestFailure("unavailable", "Document changed while reading")
+        if b"\x00" in data:
+            raise RequestFailure("invalid_request", "Binary document cannot be indexed")
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise RequestFailure("invalid_request", "Document must be UTF-8") from exc
+        return data
+
+
+class SafeDocumentReader:
+    """M15 source grants reuse the checked Windows read boundary."""
+
+    def __init__(self, data_dir: Path) -> None:
+        self.data_dir = data_dir.resolve()
+
+    def normalize_root(self, path: Path) -> str:
+        checked = SafeReadTools([path], self.data_dir).roots[0]
+        if _inside(checked, str(self.data_dir)):
+            raise ValueError("Private Jarvis data cannot be a retrieval root")
+        return ntpath.normcase(checked)
+
+    def read(self, root: str, path: str) -> bytes:
+        return SafeReadTools([Path(root)], self.data_dir).read_document(path)

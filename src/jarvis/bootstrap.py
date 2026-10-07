@@ -16,6 +16,7 @@ from jarvis.application.file_creation import FileCreateService
 from jarvis.application.images import ImageService
 from jarvis.application.jobs import JobRunner
 from jarvis.application.resource_manager import ResourceManager, RuntimeRouter
+from jarvis.application.retrieval import RetrievalService
 from jarvis.application.speech import SpeechService
 from jarvis.application.spoken import SpokenPlaybackService
 from jarvis.application.tools import ToolPolicy, ToolService
@@ -40,7 +41,7 @@ from jarvis.infrastructure.providers.llama_cpp import (
     LlamaChatProvider,
     LlamaServerRuntime,
 )
-from jarvis.infrastructure.read_tools import SafeReadTools
+from jarvis.infrastructure.read_tools import SafeDocumentReader, SafeReadTools
 from jarvis.infrastructure.resource_probe import NvidiaResourceProbe, SystemClock
 from jarvis.infrastructure.speech import CpuSpeechTranscriber, SystemRamProbe
 from jarvis.infrastructure.speech_profile import SpeechProfile
@@ -58,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         with SqliteStore(Path(args.data_dir)) as store:
             diagnostics = Diagnostics(store.data_dir)
+            retrieval = RetrievalService(store, SafeDocumentReader(store.data_dir))
             try:
                 manager = None
                 provider: ChatProvider = FakeChatProvider()
@@ -341,6 +343,7 @@ def main(argv: list[str] | None = None) -> int:
                     resource_manager=manager,
                     runtime_profile=(profile.admission_profile() if profile else None),
                     tool_service=tool_service,
+                    retrieval=retrieval,
                 )
                 profile_identity = (
                     ":".join(
@@ -450,7 +453,7 @@ def main(argv: list[str] | None = None) -> int:
                     except KeyboardInterrupt:
                         pass
                     return 0
-                return dispatch(args, service, manager, runner)
+                return dispatch(args, service, manager, runner, retrieval)
             finally:
                 diagnostics.close()
     except (

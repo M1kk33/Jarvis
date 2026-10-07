@@ -17,6 +17,7 @@ from typing import Self, TypeVar
 from uuid import uuid4
 
 from jarvis.domain.jobs import TERMINAL_JOBS, Job, JobStatus, JobStep
+from jarvis.domain.retrieval import Document, Memory, RetrievalHit, RetrievalRoot
 from jarvis.domain.tools import (
     Approval,
     ContextRecord,
@@ -234,6 +235,7 @@ class SqliteStore:
             (4, "004_jobs.sql"),
             (5, "005_images.sql"),
             (6, "006_vision.sql"),
+            (7, "007_retrieval.sql"),
         ):
             script = (
                 resources.files("jarvis")
@@ -1710,3 +1712,239 @@ class SqliteStore:
         ).fetchone()
         assert row is not None
         return self._turn(row)
+
+    @_on_owner
+    def grant_retrieval_root(
+        self, path: str, conversation_id: str | None = None
+    ) -> RetrievalRoot:
+        scope_key = conversation_id or ""
+        with self._transaction():
+            row = self._conn.execute(
+                "SELECT id FROM retrieval_roots WHERE path=? AND scope_key=?",
+                (path, scope_key),
+            ).fetchone()
+            if row is None:
+                root_id = str(uuid4())
+                self._conn.execute(
+                    "INSERT INTO retrieval_roots VALUES (?, ?, ?, ?, 1, ?)",
+                    (root_id, path, conversation_id, scope_key, _now()),
+                )
+            else:
+                root_id = row["id"]
+                self._conn.execute(
+                    "UPDATE retrieval_roots SET active=1 WHERE id=?", (root_id,)
+                )
+        return RetrievalRoot(root_id, path, conversation_id, True)
+
+    @_on_owner
+    def list_retrieval_roots(self) -> list[RetrievalRoot]:
+        rows = self._conn.execute(
+            "SELECT id, path, conversation_id, active FROM retrieval_roots ORDER BY path, scope_key"
+        ).fetchall()
+        return [
+            RetrievalRoot(r["id"], r["path"], r["conversation_id"], bool(r["active"]))
+            for r in rows
+        ]
+
+    @_on_owner
+    def get_retrieval_root(self, root_id: str) -> RetrievalRoot:
+        row = self._conn.execute(
+            "SELECT id, path, conversation_id, active FROM retrieval_roots WHERE id=?",
+            (root_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Unknown retrieval root")
+        return RetrievalRoot(
+            row["id"], row["path"], row["conversation_id"], bool(row["active"])
+        )
+
+    @_on_owner
+    def revoke_retrieval_root(self, root_id: str) -> None:
+        with self._transaction():
+            changed = self._conn.execute(
+                "UPDATE retrieval_roots SET active=0 WHERE id=? AND active=1",
+                (root_id,),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("Retrieval root is not active")
+            self._conn.execute(
+                "DELETE FROM retrieval_fts WHERE kind='document' AND source_id IN "
+                "(SELECT id FROM retrieval_documents WHERE root_id=?)",
+                (root_id,),
+            )
+            self._conn.execute(
+                "UPDATE retrieval_documents SET status='stale', updated_at=? WHERE root_id=?",
+                (_now(), root_id),
+            )
+
+    @_on_owner
+    def add_memory(self, text: str, conversation_id: str | None) -> Memory:
+        memory_id = str(uuid4())
+        with self._transaction():
+            self._conn.execute(
+                "INSERT INTO memories VALUES (?, ?, ?, ?, ?)",
+                (memory_id, conversation_id, text, _now(), _now()),
+            )
+            self._conn.execute(
+                "INSERT INTO retrieval_fts (kind, source_id, location, source_hash, conversation_id, text) "
+                "VALUES ('memory', ?, ?, '', ?, ?)",
+                (memory_id, f"memory:{memory_id}", conversation_id, text),
+            )
+        return Memory(memory_id, conversation_id, text)
+
+    @_on_owner
+    def list_memories(self, conversation_id: str | None = None) -> list[Memory]:
+        if conversation_id is None:
+            rows = self._conn.execute(
+                "SELECT id, conversation_id, text FROM memories ORDER BY created_at, id"
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT id, conversation_id, text FROM memories "
+                "WHERE conversation_id IS NULL OR conversation_id=? ORDER BY created_at, id",
+                (conversation_id,),
+            ).fetchall()
+        return [Memory(r["id"], r["conversation_id"], r["text"]) for r in rows]
+
+    @_on_owner
+    def edit_memory(self, memory_id: str, text: str) -> Memory:
+        with self._transaction():
+            changed = self._conn.execute(
+                "UPDATE memories SET text=?, updated_at=? WHERE id=?",
+                (text, _now(), memory_id),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("Unknown memory")
+            self._conn.execute(
+                "UPDATE retrieval_fts SET text=? WHERE kind='memory' AND source_id=?",
+                (text, memory_id),
+            )
+        row = self._conn.execute(
+            "SELECT conversation_id FROM memories WHERE id=?", (memory_id,)
+        ).fetchone()
+        assert row is not None
+        return Memory(memory_id, row["conversation_id"], text)
+
+    @_on_owner
+    def delete_memory(self, memory_id: str) -> None:
+        with self._transaction():
+            changed = self._conn.execute(
+                "DELETE FROM memories WHERE id=?", (memory_id,)
+            )
+            if changed.rowcount != 1:
+                raise ValueError("Unknown memory")
+            self._conn.execute(
+                "DELETE FROM retrieval_fts WHERE kind='memory' AND source_id=?",
+                (memory_id,),
+            )
+
+    @_on_owner
+    def upsert_document(
+        self,
+        root_id: str,
+        path: str,
+        sha256: str,
+        chunks: list[tuple[str, str]],
+        *,
+        document_id: str | None = None,
+    ) -> Document:
+        with self._transaction():
+            root = self._conn.execute(
+                "SELECT active FROM retrieval_roots WHERE id=?", (root_id,)
+            ).fetchone()
+            if root is None or not root["active"]:
+                raise ValueError("Retrieval root was revoked")
+            prior = self._conn.execute(
+                "SELECT id FROM retrieval_documents WHERE root_id=? AND path=?",
+                (root_id, path),
+            ).fetchone()
+            if prior is not None:
+                if document_id is not None and document_id != prior["id"]:
+                    raise ValueError("Document identity changed")
+                document_id = prior["id"]
+                self._conn.execute(
+                    "DELETE FROM retrieval_fts WHERE kind='document' AND source_id=?",
+                    (document_id,),
+                )
+                self._conn.execute(
+                    "UPDATE retrieval_documents SET sha256=?, status='current', updated_at=? WHERE id=?",
+                    (sha256, _now(), document_id),
+                )
+            else:
+                document_id = document_id or str(uuid4())
+                self._conn.execute(
+                    "INSERT INTO retrieval_documents VALUES (?, ?, ?, ?, 'current', ?, ?)",
+                    (document_id, root_id, path, sha256, _now(), _now()),
+                )
+            for location, text in chunks:
+                self._conn.execute(
+                    "INSERT INTO retrieval_fts (kind, source_id, location, source_hash, conversation_id, text) "
+                    "VALUES ('document', ?, ?, ?, NULL, ?)",
+                    (document_id, location, sha256, text),
+                )
+        return Document(document_id, root_id, path, sha256, "current")
+
+    @_on_owner
+    def list_documents(self) -> list[Document]:
+        rows = self._conn.execute(
+            "SELECT id, root_id, path, sha256, status FROM retrieval_documents ORDER BY path"
+        ).fetchall()
+        return [Document(*row) for row in rows]
+
+    @_on_owner
+    def get_document(self, document_id: str) -> Document:
+        row = self._conn.execute(
+            "SELECT id, root_id, path, sha256, status FROM retrieval_documents WHERE id=?",
+            (document_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Unknown document")
+        return Document(*row)
+
+    @_on_owner
+    def invalidate_document(self, document_id: str, expected_sha256: str) -> None:
+        with self._transaction():
+            changed = self._conn.execute(
+                "UPDATE retrieval_documents SET status='stale', updated_at=? "
+                "WHERE id=? AND sha256=? AND status='current'",
+                (_now(), document_id, expected_sha256),
+            )
+            if changed.rowcount:
+                self._conn.execute(
+                    "DELETE FROM retrieval_fts WHERE kind='document' AND source_id=?",
+                    (document_id,),
+                )
+
+    @_on_owner
+    def delete_document(self, document_id: str) -> None:
+        with self._transaction():
+            changed = self._conn.execute(
+                "DELETE FROM retrieval_documents WHERE id=?", (document_id,)
+            )
+            if changed.rowcount != 1:
+                raise ValueError("Unknown document")
+            self._conn.execute(
+                "DELETE FROM retrieval_fts WHERE kind='document' AND source_id=?",
+                (document_id,),
+            )
+
+    @_on_owner
+    def search_retrieval(
+        self, query: str, conversation_id: str, limit: int = 8
+    ) -> list[RetrievalHit]:
+        rows = self._conn.execute(
+            "SELECT f.kind, f.source_id, f.location, f.source_hash, f.text, "
+            "r.path AS root_path, d.path AS path "
+            "FROM retrieval_fts AS f "
+            "LEFT JOIN memories AS m ON f.kind='memory' AND m.id=f.source_id "
+            "LEFT JOIN retrieval_documents AS d ON f.kind='document' AND d.id=f.source_id "
+            "LEFT JOIN retrieval_roots AS r ON d.root_id=r.id "
+            "WHERE retrieval_fts MATCH ? AND "
+            "((f.kind='memory' AND m.id IS NOT NULL AND "
+            "(m.conversation_id IS NULL OR m.conversation_id=?)) OR "
+            "(f.kind='document' AND d.status='current' AND r.active=1 AND "
+            "(r.conversation_id IS NULL OR r.conversation_id=?))) "
+            "ORDER BY bm25(retrieval_fts), f.rowid LIMIT ?",
+            (query, conversation_id, conversation_id, limit),
+        ).fetchall()
+        return [RetrievalHit(*row) for row in rows]
