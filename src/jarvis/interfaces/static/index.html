@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Jarvis</title>
   <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/voice_player.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -21,7 +22,11 @@
           <p class="eyebrow">Private · on this computer</p>
           <h1 id="conversation-title">Select a conversation</h1>
         </div>
-        <button id="refresh" type="button" class="quiet">Refresh</button>
+        <div class="header-actions">
+          <span id="voice-status" role="status"></span>
+          <button id="stop-voice" type="button" class="quiet" hidden>Stop voice</button>
+          <button id="refresh" type="button" class="quiet">Refresh</button>
+        </div>
       </header>
       <div id="messages" class="messages" aria-live="polite"></div>
       <pre id="draft" class="draft" aria-live="polite"></pre>

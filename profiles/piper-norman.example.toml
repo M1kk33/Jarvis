@@ -1,0 +1,14 @@
+[piper]
+name = "piper-norman-medium-cpu"
+version = "1.8.0"
+voice_revision = "c10ece1aade47bb51c153c893d14e5bf8e5b7117"
+engine_license = "GPL-3.0-or-later"
+voice_license = "MIT"
+voice_data_license = "public-domain"
+python = "E:/JarvisData/runtimes/piper-norman/Scripts/python.exe"
+voice_model = "E:/JarvisData/models/piper-norman/en/en_US/norman/medium/en_US-norman-medium.onnx"
+model_sha256 = "b9739443232a80a59c7d18810dd856899bf16a7964725f5ab81ea49b1351cb71"
+config_sha256 = "6c2db7f558a4a8deb9fe822583c1c5105f6c4e834dd0f9de8ad17a888ee9fe1d"
+model_card_sha256 = "60eaf4d10009d1bd4a1aa555d337dae00f60421d72fee415b9139a021e7cb5d0"
+ram_peak_gib = 0.8
+cpu_threads = 4

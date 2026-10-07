@@ -33,7 +33,7 @@ if (setupForm) {
     }
   });
 } else {
-  const state = { csrf: null, selected: null, source: null, pending: null };
+  const state = { csrf: null, selected: null, source: null, pending: null, spokenEnabled: false };
   const conversationsNode = document.getElementById("conversations");
   const messagesNode = document.getElementById("messages");
   const draftNode = document.getElementById("draft");
@@ -50,6 +50,8 @@ if (setupForm) {
   let microphone = null;
   let recordTimer = null;
   let discardTranscript = false;
+  const stopVoiceButton = document.getElementById("stop-voice");
+  const voiceStatus = document.getElementById("voice-status");
 
   async function api(path, method = "GET", payload = undefined) {
     const headers = {};
@@ -83,13 +85,35 @@ if (setupForm) {
     return element;
   }
 
+  const voicePlayer = new window.JarvisVoicePlayer({
+    api,
+    fetchChunk: async (sessionId, index, signal) => {
+      const response = await fetch(`/api/spoken/${encodeURIComponent(sessionId)}/chunks/${index}`, {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": state.csrf },
+        body: "{}", signal,
+      });
+      if (!response.ok) await responseJson(response);
+      return response.arrayBuffer();
+    },
+    AudioContextType: window.AudioContext || window.webkitAudioContext,
+    onStatus: (message) => { voiceStatus.textContent = message; },
+    onActive: (active) => { stopVoiceButton.hidden = !active; },
+  });
+
   async function refreshConversation() {
     if (!state.selected) {
+      voicePlayer.stop();
       titleNode.textContent = "Select a conversation";
       messagesNode.replaceChildren();
       return;
     }
     const data = await api(`/api/conversations/${encodeURIComponent(state.selected)}`);
+    if (voicePlayer.active && !data.messages.some((message) =>
+      message.id === voicePlayer.active.messageId && message.role === "assistant"
+      && data.turns.some((turn) => turn.id === voicePlayer.active.turnId && turn.status === "complete"))) {
+      voicePlayer.stop();
+    }
     titleNode.textContent = data.conversation.title;
     messagesNode.replaceChildren();
     const turns = new Map(data.turns.map((turn) => [turn.id, turn]));
@@ -106,6 +130,13 @@ if (setupForm) {
       const content = document.createElement("pre");
       content.textContent = message.text;
       card.append(content);
+      if (state.spokenEnabled && message.role === "assistant"
+          && turns.get(message.turn_id)?.status === "complete") {
+        card.append(button("Play voice", () => {
+          if (voicePlayer.isPlaying(state.selected, message.turn_id, message.id)) voicePlayer.stop();
+          else voicePlayer.play(state.selected, message.turn_id, message.id);
+        }, true));
+      }
       if (message.role === "user") {
         const turn = turns.get(message.turn_id);
         if (turn && turn.status !== "complete") {
@@ -146,6 +177,7 @@ if (setupForm) {
     if (!state.selected && data.conversations.length) state.selected = data.conversations[0].id;
     for (const conversation of data.conversations) {
       const item = button(conversation.title, async () => {
+        voicePlayer.stop();
         if (state.source) state.source.close();
         state.source = null;
         draftNode.textContent = "";
@@ -271,6 +303,7 @@ if (setupForm) {
   document.getElementById("refresh").addEventListener("click", () => refreshAll().catch((error) => say(error.message)));
   document.getElementById("send-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    voicePlayer.stop();
     if (!state.selected) { say("Create a conversation first."); return; }
     const text = inputNode.value;
     if (!state.pending || state.pending.text !== text) {
@@ -367,15 +400,18 @@ if (setupForm) {
     finally { cancelTranscription.disabled = false; cancelTranscription.hidden = true; }
   });
   window.addEventListener("pagehide", () => {
+    voicePlayer.stop();
     if (recorder) {
       recorder.onstop = null;
       if (recorder.state === "recording") recorder.stop();
     }
     releaseMicrophone();
   });
+  stopVoiceButton.addEventListener("click", () => voicePlayer.stop());
 
   api("/api/session").then((session) => {
     state.csrf = session.csrf_token;
+    state.spokenEnabled = session.spoken_enabled;
     speechControls.hidden = !session.speech_enabled;
     return refreshAll();
   }).catch((error) => say(error.message));

@@ -1,6 +1,12 @@
-"""Transient speech transcription contract; audio never becomes a turn here."""
+"""Transient speech contracts; audio never becomes a durable turn here."""
 
-from typing import Protocol
+from collections.abc import Callable
+from typing import Protocol, TypeVar
+
+from jarvis.domain.jobs import Job
+from jarvis.domain.types import Message, Turn
+
+T = TypeVar("T")
 
 
 class SpeechError(Exception):
@@ -21,3 +27,14 @@ class Transcriber(Protocol):
 
 class RamProbe(Protocol):
     def available_ram_gib(self) -> float | None: ...
+
+
+class Synthesizer(Protocol):
+    async def synthesize(self, text: str) -> bytes: ...
+
+
+class SpokenStore(Protocol):
+    async def run(self, operation: Callable[[], T]) -> T: ...
+    def get_turn(self, turn_id: str) -> Turn: ...
+    def get_answer(self, turn_id: str) -> Message | None: ...
+    def get_job_by_turn(self, turn_id: str) -> Job | None: ...

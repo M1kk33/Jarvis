@@ -24,6 +24,7 @@ from jarvis.application.conversations import ConversationService
 from jarvis.application.images import validate_png
 from jarvis.application.jobs import JobRunner
 from jarvis.application.speech import MAX_CLIP_BYTES, SpeechService
+from jarvis.application.spoken import SpokenPlaybackService
 from jarvis.application.tools import ToolService
 from jarvis.domain.jobs import TERMINAL_JOBS, Job, JobStatus
 from jarvis.domain.resources import ResourceError
@@ -56,6 +57,16 @@ class _Conversation(_Input):
 class _Send(_Input):
     text: str = Field(min_length=1, max_length=65_536)
     submission_id: str = Field(min_length=1, max_length=200)
+
+
+class _Speak(_Input):
+    conversation_id: str = Field(min_length=1, max_length=200)
+    turn_id: str = Field(min_length=1, max_length=200)
+    message_id: str = Field(min_length=1, max_length=200)
+
+
+class _Empty(_Input):
+    pass
 
 
 def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -115,6 +126,7 @@ def create_web_app(
     tool_service: ToolService | None,
     port: int,
     speech: SpeechService | None = None,
+    spoken: SpokenPlaybackService | None = None,
 ) -> tuple[FastAPI, str]:
     """Create an isolated session; the bootstrap binds it to 127.0.0.1 only."""
     origin = f"http://127.0.0.1:{port}"
@@ -226,6 +238,36 @@ def create_web_app(
             raise HTTPException(404, "Speech is not configured")
         return {"cancelled": await speech.cancel()}
 
+    @app.post("/api/spoken/start")
+    async def start_spoken(request: Request):
+        authorize(request, mutate=True)
+        if spoken is None:
+            raise HTTPException(404, "Spoken responses are not configured")
+        supplied = await _body(request, _Speak)
+        session_id, chunks = await spoken.start(
+            supplied.conversation_id, supplied.turn_id, supplied.message_id
+        )
+        return {"session_id": session_id, "chunks": chunks}
+
+    @app.post("/api/spoken/{session_id}/chunks/{index}")
+    async def spoken_chunk(request: Request, session_id: str, index: int):
+        authorize(request, mutate=True)
+        if spoken is None:
+            raise HTTPException(404, "Spoken responses are not configured")
+        await _body(request, _Empty)
+        audio = await spoken.chunk(session_id, index)
+        if not await spoken.current(session_id):
+            raise HTTPException(409, "Playback was cancelled")
+        return Response(audio, media_type="audio/wav")
+
+    @app.post("/api/spoken/{session_id}/stop")
+    async def stop_spoken(request: Request, session_id: str):
+        authorize(request, mutate=True)
+        if spoken is None:
+            raise HTTPException(404, "Spoken responses are not configured")
+        await _body(request, _Empty)
+        return {"stopped": await spoken.stop(session_id)}
+
     @app.get("/setup")
     async def setup_page(request: Request):
         if session_digest is not None:
@@ -279,7 +321,7 @@ def create_web_app(
 
     @app.get("/static/{filename}")
     async def static_file(filename: str):
-        if filename not in {"app.css", "app.js"}:
+        if filename not in {"app.css", "app.js", "voice_player.js"}:
             raise HTTPException(404)
         media = "text/css" if filename.endswith(".css") else "text/javascript"
         return Response(
@@ -292,7 +334,11 @@ def create_web_app(
     @app.get("/api/session")
     async def session(request: Request):
         authorize(request)
-        return {"csrf_token": csrf_token, "speech_enabled": speech is not None}
+        return {
+            "csrf_token": csrf_token,
+            "speech_enabled": speech is not None,
+            "spoken_enabled": spoken is not None,
+        }
 
     @app.get("/api/conversations")
     async def conversations(request: Request):

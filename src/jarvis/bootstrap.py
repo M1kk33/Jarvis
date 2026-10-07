@@ -16,6 +16,7 @@ from jarvis.application.images import ImageService
 from jarvis.application.jobs import JobRunner
 from jarvis.application.resource_manager import ResourceManager, RuntimeRouter
 from jarvis.application.speech import SpeechService
+from jarvis.application.spoken import SpokenPlaybackService
 from jarvis.application.tools import ToolPolicy, ToolService
 from jarvis.domain.ports import ChatProvider
 from jarvis.domain.resource_ports import ManagedRuntime
@@ -27,6 +28,8 @@ from jarvis.infrastructure.diagnostics import Diagnostics
 from jarvis.infrastructure.gpu_lock import NamedGpuLock
 from jarvis.infrastructure.image_profile import LocalImageProfile
 from jarvis.infrastructure.local_profile import LocalTextProfile
+from jarvis.infrastructure.piper_adapter import CpuPiperSynthesizer
+from jarvis.infrastructure.piper_profile import PiperProfile
 from jarvis.infrastructure.providers.comfyui import ComfyImageProvider, ComfyRuntime
 from jarvis.infrastructure.providers.fake import FakeChatProvider
 from jarvis.infrastructure.providers.llama_cpp import (
@@ -59,6 +62,8 @@ def main(argv: list[str] | None = None) -> int:
                     raise ValueError("Image profile requires the pinned text profile")
                 if args.speech_profile and args.command != "web":
                     raise ValueError("Speech profile is available only in web")
+                if args.piper_profile and args.command != "web":
+                    raise ValueError("Piper profile is available only in web")
                 if args.command == "calibrate" and not args.profile:
                     raise ValueError("Calibration requires --profile")
                 if args.read_root and (
@@ -299,6 +304,7 @@ def main(argv: list[str] | None = None) -> int:
 
                     from jarvis.interfaces.web import create_web_app
 
+                    cpu_gate = asyncio.Lock()
                     speech = None
                     if args.speech_profile:
                         speech_profile = SpeechProfile.from_file(
@@ -311,10 +317,27 @@ def main(argv: list[str] | None = None) -> int:
                             ),
                             SystemRamProbe(),
                             manager,
+                            cpu_gate,
+                        )
+
+                    spoken = None
+                    if args.piper_profile:
+                        piper_profile = PiperProfile.from_file(
+                            Path(args.piper_profile), store.data_dir
+                        )
+                        piper_profile.verify_artifacts()
+                        spoken = SpokenPlaybackService(
+                            store,
+                            CpuPiperSynthesizer(
+                                piper_profile, store.data_dir / "run" / "piper"
+                            ),
+                            SystemRamProbe(),
+                            manager,
+                            cpu_gate,
                         )
 
                     app, setup_token = create_web_app(
-                        service, runner, tool_service, args.port, speech
+                        service, runner, tool_service, args.port, speech, spoken
                     )
                     print(f"Open http://127.0.0.1:{args.port}/setup")
                     print(f"One-time setup token: {setup_token}", flush=True)
@@ -335,6 +358,8 @@ def main(argv: list[str] | None = None) -> int:
                         try:
                             await server.serve()
                         finally:
+                            if spoken is not None:
+                                await spoken.stop()
                             if speech is not None:
                                 await speech.cancel()
                             await runner.wait_for_idle()

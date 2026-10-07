@@ -3,7 +3,7 @@
 import asyncio
 import math
 
-from jarvis.application.resource_manager import ResourceManager
+from jarvis.application.resource_manager import ResourceManager, _settle
 from jarvis.domain.speech import RamProbe, SpeechInvalid, SpeechUnavailable, Transcriber
 
 MAX_CLIP_BYTES = 3 * 1024 * 1024
@@ -19,10 +19,12 @@ class SpeechService:
         transcriber: Transcriber,
         ram: RamProbe,
         manager: ResourceManager | None = None,
+        cpu_gate: asyncio.Lock | None = None,
     ) -> None:
         self.transcriber = transcriber
         self.ram = ram
         self.manager = manager
+        self.cpu_gate = cpu_gate
         self._lock = asyncio.Lock()
         self._active_task: asyncio.Task | None = None
 
@@ -34,12 +36,18 @@ class SpeechService:
         async with self._lock:
             self._active_task = asyncio.current_task()
             try:
-                if self.manager is None:
-                    return await self._admitted(clip, media_type)
-                async with self.manager.cpu_worker():
-                    return await self._admitted(clip, media_type)
+                if self.cpu_gate is None:
+                    return await self._run(clip, media_type)
+                async with self.cpu_gate:
+                    return await self._run(clip, media_type)
             finally:
                 self._active_task = None
+
+    async def _run(self, clip: bytes, media_type: str) -> str:
+        if self.manager is None:
+            return await self._admitted(clip, media_type)
+        async with self.manager.cpu_worker():
+            return await self._admitted(clip, media_type)
 
     async def _admitted(self, clip: bytes, media_type: str) -> str:
         available = self.ram.available_ram_gib()
@@ -60,7 +68,7 @@ class SpeechService:
             return False
         task.cancel()
         try:
-            await asyncio.shield(task)
+            await _settle(task)
         except asyncio.CancelledError:
             pass
         return True
