@@ -551,7 +551,7 @@ def create_web_app(
                                 "actionable": actionable,
                                 "preview": (
                                     json.loads(invocation.arguments_json)
-                                    if invocation.name == "create_text_file"
+                                    if invocation.name in {"create_text_file", "fetch_public_page"}
                                     else None
                                 ),
                             }

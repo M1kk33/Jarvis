@@ -1,6 +1,6 @@
 # Jarvis implementation rules
 
-- Work only on the assigned milestone in `ARCHITECTURE.md`. M12 adds one explicit, user-selected PNG screenshot with preview, a pinned local vision model/projector, bounded image input, and a durable text answer linked to its source. Do not add continuous recording, autonomous UI actions, multiple images, video, browser/network tools, or cloud inference.
+- Work only on the assigned milestone in `ARCHITECTURE.md`. M13 adds one approved exact-URL public HTTP(S) page retrieval, bounded plain-text extraction, and explicit network enablement. Do not add login cookies, uploads, search APIs, browser control, crawling, or cloud inference.
 - Keep the direction `interfaces -> application -> domain`; infrastructure implements domain contracts, and bootstrap alone wires concrete classes. Core imports must need no GPU, model, network, or inference package.
 - SQLite owns conversation and turn state. Submission and final reply each commit atomically with their turn transition. One database thread owns the connection; cancellation of an await requires outcome verification by stable identity. Check expected state before completion and acknowledge only committed results.
 - Preserve incomplete and failed turns. A reused submission ID must not call the provider again or create messages; changed text with the same ID is an error.

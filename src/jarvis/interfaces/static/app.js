@@ -276,6 +276,12 @@ if (setupForm) {
         const content = document.createElement("pre");
         content.textContent = item.preview.content;
         card.append(content);
+      } else if (item.name === "fetch_public_page" && item.preview) {
+        line(card, "Send one GET request to this exact public URL:");
+        const url = document.createElement("pre");
+        url.textContent = item.preview.url;
+        card.append(url);
+        line(card, "The full path and query are sent to the website. Check for private data before approving. Redirects need a new request.", "subtle");
       } else {
         const argumentsText = document.createElement("pre");
         argumentsText.textContent = item.arguments;

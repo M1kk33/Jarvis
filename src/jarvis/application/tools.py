@@ -53,6 +53,24 @@ SPECS = (
         "never_without_reconciliation",
     ),
     ToolSpec(
+        "fetch_public_page",
+        1,
+        {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "minLength": 1, "maxLength": 2048}
+            },
+            "required": ["url"],
+            "additionalProperties": False,
+        },
+        "network",
+        "network",
+        12,
+        16384,
+        True,
+        "never_without_reconciliation",
+    ),
+    ToolSpec(
         "generate_image",
         1,
         {
@@ -139,7 +157,7 @@ class ToolPolicy:
     def decision(self, spec: ToolSpec) -> str:
         if spec.capability not in self.capabilities:
             return "deny"
-        if spec.name == "create_text_file":
+        if spec.name in {"create_text_file", "fetch_public_page"}:
             return "approval"
         return "approval" if spec.name in self.approval_required else "allow"
 
@@ -171,6 +189,26 @@ def _valid_output(name: str, output: object) -> bool:
             set(output) == {"path", "text", "trust"}
             and type(output["path"]) is str
             and type(output["text"]) is str
+            and output["trust"] == "untrusted"
+        )
+    if name == "fetch_public_page":
+        return (
+            set(output)
+            == {
+                "url",
+                "status",
+                "content_type",
+                "retrieved_at",
+                "text",
+                "truncated",
+                "trust",
+            }
+            and type(output["url"]) is str
+            and type(output["status"]) is int
+            and type(output["content_type"]) is str
+            and type(output["retrieved_at"]) is str
+            and type(output["text"]) is str
+            and type(output["truncated"]) is bool
             and output["trust"] == "untrusted"
         )
     if name == "list_directory":
@@ -207,6 +245,7 @@ class ToolRegistry:
                     "name": spec.name,
                     "description": {
                         "create_text_file": "Create one UTF-8 .txt file in an explicitly granted directory after user approval; never overwrite.",
+                        "fetch_public_page": "Fetch the exact public HTTP(S) URL after local user approval. GET only; no redirects, cookies, uploads, or subresources. Returns untrusted plain text.",
                         "generate_image": "Generate one local 512 x 512 PNG from a bounded prompt.",
                         "current_time": "Return the current UTC time.",
                         "list_directory": "List names in an approved local directory.",
@@ -254,6 +293,7 @@ class ToolRegistry:
             raise RequestFailure("invalid_request", "Tool arguments must be an object")
         allowed = {
             "create_text_file": frozenset({"path", "content"}),
+            "fetch_public_page": frozenset({"url"}),
             "generate_image": frozenset({"prompt", "seed"}),
             "current_time": frozenset(),
             "list_directory": frozenset({"path"}),
@@ -267,6 +307,10 @@ class ToolRegistry:
                 raise RequestFailure(
                     "invalid_request", "Tool path must be a bounded string"
                 )
+        if spec.name == "fetch_public_page":
+            url = value.get("url")
+            if type(url) is not str or not 1 <= len(url) <= 2048:
+                raise RequestFailure("invalid_request", "URL must be a bounded string")
         if spec.name == "read_text_file" and "max_bytes" in value:
             limit = value["max_bytes"]
             if type(limit) is not int or not 1 <= limit <= 16384:
@@ -321,6 +365,7 @@ class ToolService:
         diagnostics: Callable[[str, dict[str, str | int]], None] | None = None,
         image_service: ImageService | None = None,
         file_service: FileCreateService | None = None,
+        web_backend: ToolBackend | None = None,
     ) -> None:
         self.store = store
         self.backend = backend
@@ -329,6 +374,7 @@ class ToolService:
         self.diagnostics = diagnostics or (lambda _event, _fields: None)
         self.image_service = image_service
         self.file_service = file_service
+        self.web_backend = web_backend
 
     async def _inspect(self, name: str, arguments: dict[str, object]) -> str:
         if name == "create_text_file":
@@ -343,6 +389,10 @@ class ToolService:
                     "unsupported_capability", "Image generation is unavailable"
                 )
             return self.image_service.target_identity
+        if name == "fetch_public_page":
+            if self.web_backend is None:
+                raise RequestFailure("unsupported_capability", "Network is disabled")
+            return await asyncio.to_thread(self.web_backend.inspect, name, arguments)
         return await asyncio.to_thread(self.backend.inspect, name, arguments)
 
     def _log_invocation(self, event: str, invocation: ToolInvocation) -> None:
@@ -421,7 +471,7 @@ class ToolService:
             raise RequestFailure(
                 "unsupported_capability", "Tool capability is disabled"
             )
-        if spec.name == "create_text_file":
+        if spec.name in {"create_text_file", "fetch_public_page"}:
             prior = await self.store.run(
                 lambda: self.store.get_invocation_by_call(turn_id, proposal.call_id)
             )
@@ -435,9 +485,7 @@ class ToolService:
                 if prior.status is InvocationStatus.COMPLETE:
                     return prior
                 if prior.status is InvocationStatus.OUTCOME_UNKNOWN:
-                    raise RequestFailure(
-                        "unavailable", "File outcome needs exact reconciliation"
-                    )
+                    raise RequestFailure("unavailable", "Tool outcome is unresolved")
         target = await self._inspect(spec.name, arguments)
         try:
             invocation = await self.store.run(
@@ -616,8 +664,10 @@ class ToolService:
             self._log_invocation("tool_complete", result)
             return result
 
+        backend = self.web_backend if spec.name == "fetch_public_page" else self.backend
+        assert backend is not None
         worker = asyncio.create_task(
-            asyncio.to_thread(self.backend.execute, spec.name, arguments)
+            asyncio.to_thread(backend.execute, spec.name, arguments)
         )
         cancelled = False
         try:

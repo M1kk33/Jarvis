@@ -43,6 +43,7 @@ from jarvis.infrastructure.speech import CpuSpeechTranscriber, SystemRamProbe
 from jarvis.infrastructure.speech_profile import SpeechProfile
 from jarvis.infrastructure.sqlite_store import SqliteStore
 from jarvis.infrastructure.vision_profile import LocalVisionProfile
+from jarvis.infrastructure.web_fetch import PublicPageFetcher
 from jarvis.interfaces.cli import dispatch, parse_args
 
 
@@ -88,6 +89,10 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 if args.command == "reconcile-file" and not args.write_root:
                     raise ValueError("File reconciliation requires --write-root")
+                if args.enable_network and (args.command != "web" or not args.profile):
+                    raise ValueError(
+                        "Network retrieval requires a model-backed web session"
+                    )
                 if args.profile and args.command in {
                     "send",
                     "session",
@@ -256,6 +261,8 @@ def main(argv: list[str] | None = None) -> int:
                     capabilities = {"clock"}
                     if args.read_root:
                         capabilities.add("read_files")
+                    if args.enable_network:
+                        capabilities.add("network")
                     file_service = None
                     if args.write_root:
                         capabilities.add("write_files")
@@ -279,12 +286,21 @@ def main(argv: list[str] | None = None) -> int:
                         store,
                         backend,
                         ToolPolicy(
-                            version="m9-v1" if file_service is not None else "m5-v1",
+                            version=(
+                                "m13-v1"
+                                if args.enable_network
+                                else "m9-v1"
+                                if file_service is not None
+                                else "m5-v1"
+                            ),
                             capabilities=frozenset(capabilities),
                         ),
                         diagnostics,
                         image_service=image_service,
                         file_service=file_service,
+                        web_backend=PublicPageFetcher()
+                        if args.enable_network
+                        else None,
                     )
                 if args.command == "reconcile-file":
                     assert tool_service is not None

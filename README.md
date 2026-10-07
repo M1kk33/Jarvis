@@ -1,12 +1,14 @@
-# Jarvis (M12)
+# Jarvis (M13)
 
-Jarvis supports durable terminal and local-browser conversations with a deterministic offline fake or one pinned local Qwen3-4B text model. M8 adds one optional local SD 1.5 image tool with verified text/image handoff and durable PNG artifacts. M9 adds one approval-only tool to create a new UTF-8 `.txt` file in an explicitly granted directory. The browser shows chat, history, jobs, progress, exact-action approvals, and locally generated images on `127.0.0.1`. Durable cancellation, explicit recovery, and verified backup/restore remain available. The three read-only tools remain current UTC time, bounded directory listing, and bounded UTF-8 file reading. No shell, network, edit, or delete tool is available.
+Jarvis supports durable terminal and local-browser conversations with a deterministic offline fake or one pinned local Qwen3-4B text model. M8 adds one optional local SD 1.5 image tool with verified text/image handoff and durable PNG artifacts. M9 adds one approval-only tool to create a new UTF-8 `.txt` file in an explicitly granted directory. The browser shows chat, history, jobs, progress, exact-action approvals, and locally generated images on `127.0.0.1`. Durable cancellation, explicit recovery, and verified backup/restore remain available. The three initial read-only tools remain current UTC time, bounded directory listing, and bounded UTF-8 file reading. M13 adds optional, approved public-page retrieval. No shell, edit, or delete tool is available.
 
 M10 adds optional push-to-talk transcription. A short microphone recording becomes editable text in the browser composer; it is never sent or treated as a tool command until the user explicitly submits it. The pinned faster-whisper base INT8 worker runs on CPU in a separate environment. See [speech worker setup](docs/SPEECH_WORKER.md) and add `--speech-profile E:\JarvisData\speech.toml` before `web` to enable Record.
 
 M11 adds optional local spoken playback for completed assistant replies. A **Play voice** control reads the saved text through one pinned CPU Piper voice; **Stop voice** interrupts playback, and synthesis failure leaves the text available. See [Piper voice setup](docs/PIPER_WORKER.md) and add `--piper-profile E:\JarvisData\piper.toml` before `web` to enable it. Voice never authorizes a tool action.
 
 M12 adds one explicit screenshot upload and question in the browser. Add `--vision-profile E:\JarvisData\vision.toml` beside the text `--profile` to enable the preview and local vision model. The screenshot is saved with its question and answer as a private artifact and included in backups; M12 provides no per-screenshot deletion control. See [vision setup and limits](docs/VISION_WORKER.md). The model does not control the screen or authorize tools.
+
+M13 adds `--enable-network` for a model-backed `web` session. The browser asks for a fresh approval showing the exact public HTTP(S) URL, including its path and query, before each GET. Check that URL for private data before approving: the whole path and query are sent to the site. Retrieval accepts HTML or plain text, extracts bounded text as untrusted evidence, and never follows redirects or loads images/subresources. Local/private/metadata destinations, URL credentials, uploads, cookies, nonstandard ports, and search/browser tools are unavailable. Ordinary chat remains offline without the flag.
 
 ## Setup
 
@@ -52,7 +54,7 @@ To enable M9 file creation in the browser, add `--write-root E:\YourApprovedFold
 
 The page renders assistant and tool text literally, without Markdown previews or external images. Its restrictive Content Security Policy blocks external resource loads. Locally generated PNGs appear through a verified, authenticated same-origin preview route and can be downloaded. Mutations require the session cookie, same-origin requests, and a CSRF token. Artifact downloads require the same session and serve only verified stored artifacts as attachments. Approval cards display the tool, canonical arguments, target, policy, and owning job before the user approves or rejects. Current default read-only tools normally do not require approval.
 
-To enable file reads, create a narrow workspace directory and grant it explicitly. The private data directory itself cannot be a read root. Without `--read-root`, model sessions expose only `current_time`.
+To enable file reads, create a narrow workspace directory and grant it explicitly. The private data directory itself cannot be a read root. Without `--read-root` or `--enable-network`, model sessions expose only `current_time`.
 
 ```powershell
 uv run --offline --locked --python 3.12 python -m jarvis --data-dir E:\JarvisData --profile E:\JarvisData\model.toml --read-root E:\JarvisData\workspaces\default session CONVERSATION_ID

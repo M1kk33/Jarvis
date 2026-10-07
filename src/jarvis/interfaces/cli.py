@@ -24,6 +24,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--speech-profile", help="Pinned CPU speech profile (web only)")
     parser.add_argument("--piper-profile", help="Pinned CPU voice profile (web only)")
     parser.add_argument(
+        "--enable-network", action="store_true",
+        help="Offer exact-URL public page retrieval with per-request web approval",
+    )
+    parser.add_argument(
         "--vision-profile", help="Pinned screenshot vision profile (web only)"
     )
     parser.add_argument(
