@@ -5,10 +5,11 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $projectDir = Split-Path -Parent $PSScriptRoot
-$pythonWindow = Join-Path $projectDir '.venv\Scripts\pythonw.exe'
+$pythonConsole = Join-Path $projectDir '.venv\Scripts\python.exe'
+$startScript = Join-Path $PSScriptRoot 'start-jarvis.ps1'
 $entry = Join-Path $projectDir 'Jarvis.pyw'
 $privateDir = (Resolve-Path -LiteralPath $DataDir).Path
-if (-not (Test-Path -LiteralPath $pythonWindow -PathType Leaf)) {
+if (-not (Test-Path -LiteralPath $pythonConsole -PathType Leaf)) {
     throw 'Install the locked project environment first (uv sync --python 3.12).'
 }
 if ($EnableBrowser -and -not $EnableNetwork) {
@@ -36,6 +37,8 @@ foreach ($profile in $profiles) {
 if ($EnableNetwork) { $launchArgs += '--enable-network' }
 if ($EnableBrowser) { $launchArgs += '--enable-browser' }
 $launchArgs += 'web'
+$encodedArguments = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($launchArgs -join ' '))
+$windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $shell = New-Object -ComObject WScript.Shell
 $destinations = @(
     (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Jarvis.lnk'),
@@ -43,8 +46,9 @@ $destinations = @(
 )
 foreach ($destination in $destinations) {
     $shortcut = $shell.CreateShortcut($destination)
-    $shortcut.TargetPath = $pythonWindow
-    $shortcut.Arguments = $launchArgs -join ' '
+    $shortcut.TargetPath = $windowsPowerShell
+    $shortcut.Arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $startScript + '" -ArgumentsBase64 ' + $encodedArguments
+    $shortcut.IconLocation = $pythonConsole + ',0'
     $shortcut.WorkingDirectory = $projectDir
     $shortcut.Description = 'Open the local Jarvis interface'
     $shortcut.Save()

@@ -1,10 +1,15 @@
 """Console-free launch readiness, authentication, stop, and instance ownership."""
 
 import asyncio
+import base64
+import json
+import os
 import runpy
 import socket
+import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from queue import Empty
 
@@ -14,6 +19,7 @@ import pytest
 from jarvis.bootstrap import main
 from jarvis.infrastructure.desktop_instance import DesktopInstance
 from jarvis.infrastructure.sqlite_store import SqliteStore
+from jarvis.infrastructure.windows_process import WindowsProcessSupervisor
 from jarvis.interfaces.desktop import WebControl, serve_controlled
 
 
@@ -178,3 +184,69 @@ def test_pythonw_entry_suppresses_console_output_and_restores_streams(
     assert (sys.stdout, sys.stderr) == streams
     captured = capsys.readouterr()
     assert "never-log-this-token" not in captured.out + captured.err
+
+
+def test_shortcut_wrapper_bypasses_missing_venv_redirector(tmp_path):
+    # Exercise the actual Windows shortcut command, rather than launching Python
+    # from an already active environment. No redirector exists in this fixture.
+    project = tmp_path / "Jarvis тест & folder"
+    scripts = project / "scripts"
+    scripts.mkdir(parents=True)
+    venv = project / ".venv"
+    (venv / "Scripts").mkdir(parents=True)
+    (venv / "Lib" / "site-packages").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text(
+        f"home = {sys.base_prefix}\ninclude-system-site-packages = false\n",
+        encoding="utf-8",
+    )
+    start = scripts / "start-jarvis.ps1"
+    start.write_bytes(
+        (Path(__file__).parents[1] / "scripts" / "start-jarvis.ps1").read_bytes()
+    )
+    probe = project / "probe.pyw"
+    result = project / "result.json"
+    probe.write_text(
+        "import sys,json\nfrom pathlib import Path\n"
+        "Path(sys.argv[1]).write_text(json.dumps({'prefix':sys.prefix,"
+        "'executable':sys.executable,'input':sys.argv[2]}),encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    literal = 'argument with spaces, $() & ` and a "quote"'
+    arguments = base64.b64encode(
+        subprocess.list2cmdline([str(probe), str(result), literal]).encode()
+    ).decode()
+    windows_shell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    process = WindowsProcessSupervisor().spawn(
+        windows_shell,
+        [
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(start),
+            "-ArgumentsBase64",
+            arguments,
+        ],
+        project,
+        dict(os.environ),
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not result.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert result.exists(), process.stderr.text
+        value = json.loads(result.read_text(encoding="utf-8"))
+        assert Path(value["prefix"]) == venv
+        assert Path(value["executable"]) == venv / "Scripts" / "pythonw.exe"
+        assert value["input"] == literal
+    finally:
+        assert process.stop(0, 10)
