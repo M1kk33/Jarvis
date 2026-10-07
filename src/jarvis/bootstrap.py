@@ -5,6 +5,7 @@ import json
 import sqlite3
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import psutil
 
@@ -50,8 +51,13 @@ from jarvis.infrastructure.vision_profile import LocalVisionProfile
 from jarvis.infrastructure.web_fetch import PublicPageFetcher
 from jarvis.interfaces.cli import dispatch, parse_args
 
+if TYPE_CHECKING:
+    from jarvis.interfaces.desktop import WebControl
 
-def main(argv: list[str] | None = None) -> int:
+
+def main(
+    argv: list[str] | None = None, *, web_control: "WebControl | None" = None
+) -> int:
     args = parse_args(argv)
     try:
         if args.command == "restore":
@@ -421,8 +427,9 @@ def main(argv: list[str] | None = None) -> int:
                     app, setup_token = create_web_app(
                         service, runner, tool_service, args.port, speech, spoken
                     )
-                    print(f"Open http://127.0.0.1:{args.port}/setup")
-                    print(f"One-time setup token: {setup_token}", flush=True)
+                    if web_control is None:
+                        print(f"Open http://127.0.0.1:{args.port}/setup")
+                        print(f"One-time setup token: {setup_token}", flush=True)
 
                     async def serve() -> None:
                         server = uvicorn.Server(
@@ -438,7 +445,16 @@ def main(argv: list[str] | None = None) -> int:
                             )
                         )
                         try:
-                            await server.serve()
+                            if web_control is None:
+                                await server.serve()
+                            else:
+                                from jarvis.interfaces.desktop import serve_controlled
+
+                                await serve_controlled(
+                                    server,
+                                    web_control,
+                                    f"http://127.0.0.1:{args.port}/setup#token={setup_token}",
+                                )
                         finally:
                             if spoken is not None:
                                 await spoken.stop()
@@ -464,5 +480,33 @@ def main(argv: list[str] | None = None) -> int:
         OSError,
         sqlite3.Error,
     ) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        if web_control is None:
+            print(f"error: {exc}", file=sys.stderr)
+        else:
+            web_control.error(str(exc))
         return 1
+
+
+def desktop_main(argv: list[str]) -> int:
+    """Wire a desktop controller to the same web command, with no extra server."""
+    from tkinter import messagebox
+
+    from jarvis.infrastructure.desktop_instance import DesktopInstance
+    from jarvis.interfaces.desktop import run_desktop
+
+    args = parse_args(argv)
+    if args.command != "web":
+        raise ValueError("Desktop launcher supports only the web interface")
+    instance = DesktopInstance(Path(args.data_dir))
+    try:
+        if not instance.acquired:
+            if not instance.focus():
+                messagebox.showinfo(
+                    "Jarvis", "Jarvis уже запускается. Подождите немного."
+                )
+            return 0
+        return run_desktop(
+            lambda control: main(argv, web_control=control), instance.title
+        )
+    finally:
+        instance.close()

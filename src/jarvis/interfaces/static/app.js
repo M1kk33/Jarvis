@@ -13,9 +13,16 @@ async function responseJson(response) {
   return value;
 }
 
+// Also clear a fragment inherited by a redirect into an already signed-in tab.
+const launchToken = new URLSearchParams(window.location.hash.slice(1)).get("token");
+if (window.location.hash) {
+  window.history.replaceState(null, "", window.location.pathname + window.location.search);
+}
+
 if (setupForm) {
-  setupForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
+  const tokenInput = document.getElementById("setup-token");
+  async function exchangeToken(event) {
+    if (event) event.preventDefault();
     say("");
     const button = setupForm.querySelector("button");
     button.disabled = true;
@@ -24,14 +31,20 @@ if (setupForm) {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: document.getElementById("setup-token").value }),
+        body: JSON.stringify({ token: tokenInput.value }),
       }));
-      window.location.assign("/");
+      tokenInput.value = "";
+      window.location.replace("/");
     } catch (error) {
       say(error.message);
       button.disabled = false;
     }
-  });
+  }
+  setupForm.addEventListener("submit", exchangeToken);
+  if (launchToken) {
+    tokenInput.value = launchToken;
+    exchangeToken();
+  }
 } else {
   const state = { csrf: null, selected: null, source: null, pending: null, spokenEnabled: false };
   const conversationsNode = document.getElementById("conversations");

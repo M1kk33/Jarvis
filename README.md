@@ -24,6 +24,20 @@ uv sync --python 3.12
 
 This installs the locked Python dependencies. The offline fake and tests require no model download or GPU. The local model requires native Windows, a compatible NVIDIA GPU and driver, and the pinned runtime/model files. The data directory is always chosen explicitly; use a private local folder outside the source repository, for example `E:\JarvisData`.
 
+## Double-click launch on Windows
+
+After installing the locked environment and preparing `model.toml`, install the shortcut once:
+
+```powershell
+.\scripts\install-shortcut.ps1 -DataDir E:\JarvisData
+```
+
+Double-click **Jarvis** on the desktop or in the Start menu. It starts the existing local server without a console, opens your default browser, and signs in automatically. A small controller window offers **Открыть интерфейс** (open interface) and **Остановить Jarvis** (stop). Closing that window also stops the server; shutdown waits for active jobs and model cleanup. Closing only the browser leaves Jarvis running. Startup failures appear in a dialog. Repeated clicks focus the existing controller; the database lock also protects against a separate terminal instance.
+
+The shortcut uses `.venv\Scripts\pythonw.exe` and the existing private data directory. It includes `model.toml` and any existing `image.toml`, `speech.toml`, `piper.toml`, and `vision.toml` profiles at installation time. It neither downloads models nor grants filesystem access. Network tools remain off unless the shortcut is installed with `-EnableNetwork`; browser rendering additionally requires `-EnableBrowser` and the separately installed browser extra. Reinstall the shortcut after moving the project/data directory or changing which profiles should be included. This is a launcher for the existing browser UI, not a packaged installer.
+
+The single-use sign-in token travels in the URL fragment, never in an HTTP request URL or a log, and the setup page removes it from browser history before exchanging it. Use the same default browser when reopening the interface. If its session cookie is cleared or a different browser is used, stop and relaunch Jarvis to obtain a fresh sign-in.
+
 ## Terminal commands
 
 ```powershell
