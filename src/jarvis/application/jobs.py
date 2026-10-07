@@ -1,11 +1,17 @@
 """One bounded, explicit-resume runner for durable chat jobs."""
 
 import asyncio
+import hashlib
 from collections.abc import Awaitable, Callable
 from threading import Event
 from uuid import uuid4
 
 from jarvis.application.conversations import ConversationService, _error_code
+from jarvis.application.vision import (
+    MAX_QUESTION_CHARS,
+    VisionService,
+    validate_screenshot,
+)
 from jarvis.domain.jobs import TERMINAL_JOBS, Job, JobStatus
 from jarvis.domain.ports import JobStore
 from jarvis.domain.resources import ResourceUnavailable
@@ -22,6 +28,7 @@ class JobRunner:
         store: JobStore,
         conversations: ConversationService,
         profile_identity: str | None = None,
+        vision: VisionService | None = None,
     ) -> None:
         self.store = store
         self.conversations = conversations
@@ -30,6 +37,7 @@ class JobRunner:
             if conversations.runtime_profile is not None
             else "fake"
         )
+        self.vision = vision
         self._execution = asyncio.Lock()
         self._active: dict[str, tuple[Event, asyncio.Task[Job]]] = {}
         self._background: set[asyncio.Task[Job]] = set()
@@ -63,6 +71,94 @@ class JobRunner:
             raise SubmissionConflict("Existing submission predates M6 jobs")
         if created:
             self._diagnostics("job_queued", {"job_id": job.id, "turn_id": turn.id})
+        return job, not created
+
+    async def submit_vision(
+        self,
+        conversation_id: str,
+        question: str,
+        image: bytes,
+        submission_id: str,
+    ) -> tuple[Job, bool]:
+        if self.vision is None:
+            raise RequestFailure("unsupported_capability", "Vision is not configured")
+        vision_service = self.vision
+        if not question.strip() or len(question) > MAX_QUESTION_CHARS:
+            raise RequestFailure(
+                "invalid_request", "Screenshot question is out of bounds"
+            )
+        if not submission_id or len(submission_id) > 200:
+            raise RequestFailure("invalid_request", "Submission ID is out of bounds")
+        validate_screenshot(image)
+        digest = hashlib.sha256(image).hexdigest()
+
+        def previous():
+            self.conversations.store.get_conversation(conversation_id)
+            prior = self.conversations.store.get_turn_by_submission(
+                conversation_id, submission_id
+            )
+            if prior is None:
+                return None
+            return (
+                prior,
+                self.store.get_user_message(prior.id),
+                self.store.get_vision_input(prior.id),
+                self.store.get_job_by_turn(prior.id),
+            )
+
+        prior = await self.store.run(previous)
+        if prior is not None:
+            turn, user, source, existing_job = prior
+            if (
+                user.text != question
+                or source is None
+                or source.sha256 != digest
+                or source.profile_name != vision_service.profile_identity
+            ):
+                raise SubmissionConflict("Submission ID already has different input")
+            if existing_job is None:
+                raise SubmissionConflict("Screenshot submission has no durable job")
+            return existing_job, True
+        job_id = str(uuid4())
+        attachment = await vision_service.stage(job_id, image)
+        try:
+            turn, created = await self.store.run(
+                lambda: self.store.begin_turn(
+                    conversation_id,
+                    question,
+                    submission_id,
+                    job_id,
+                    vision_service.profile_identity,
+                    attachment,
+                )
+            )
+        except asyncio.CancelledError:
+            prior = await self.store.run(
+                lambda: self.conversations.store.get_turn_by_submission(
+                    conversation_id, submission_id
+                )
+            )
+            if prior is None:
+                raise
+            stored, user = await self.store.run(
+                lambda: (
+                    self.store.get_vision_input(prior.id),
+                    self.store.get_user_message(prior.id),
+                )
+            )
+            if (
+                stored is None
+                or user.text != question
+                or stored.sha256 != attachment.sha256
+                or stored.profile_name != attachment.profile_name
+            ):
+                raise SubmissionConflict(
+                    "Screenshot submission outcome differs"
+                ) from None
+            turn, created = prior, False
+        job = await self.store.run(lambda: self.store.get_job_by_turn(turn.id))
+        if job is None:
+            raise SubmissionConflict("Screenshot submission has no durable job")
         return job, not created
 
     def launch(
@@ -114,7 +210,11 @@ class JobRunner:
             if (
                 manager is None
                 or profile is None
-                or self.profile_identity != job.profile_name
+                or job.profile_name
+                not in {
+                    self.profile_identity,
+                    self.vision.profile_identity if self.vision is not None else "",
+                }
                 or not await manager.verify_previous_worker()
             ):
                 raise ResourceUnavailable("Previous model-worker cleanup is unverified")
@@ -130,8 +230,16 @@ class JobRunner:
         job = await self.store.run(lambda: self.store.get_job(job_id))
         if job.status in TERMINAL_JOBS:
             return job
-        expected_profile = self.profile_identity
-        if job.profile_name != expected_profile:
+        vision_input = await self.store.run(
+            lambda: self.store.get_vision_input(job.turn_id)
+        )
+        is_vision = vision_input is not None
+        expected_profile = (
+            self.vision.profile_identity
+            if is_vision and self.vision is not None
+            else self.profile_identity
+        )
+        if job.profile_name != expected_profile or (is_vision and self.vision is None):
             raise RequestFailure(
                 "unsupported_capability", "Job requires its original model profile"
             )
@@ -159,12 +267,22 @@ class JobRunner:
             latest = await self.store.run(lambda: self.store.get_job(job_id))
             if signal.is_set() or latest.cancel_requested:
                 return await self._settle_cancellation(job_id)
-            answer = await asyncio.wait_for(
-                self.conversations.generate_existing_turn_async(
-                    job.turn_id, job.conversation_id, signal, on_delta, job.attempt
-                ),
-                timeout=600,
-            )
+            answer: str | None
+            if is_vision:
+                assert self.vision is not None and vision_input is not None
+                answer = await asyncio.wait_for(
+                    self.vision.generate(
+                        job.turn_id, vision_input, signal, on_delta, job.attempt
+                    ),
+                    timeout=600,
+                )
+            else:
+                answer = await asyncio.wait_for(
+                    self.conversations.generate_existing_turn_async(
+                        job.turn_id, job.conversation_id, signal, on_delta, job.attempt
+                    ),
+                    timeout=600,
+                )
             if signal.is_set():
                 return await self._settle_cancellation(job_id)
             if answer is None:

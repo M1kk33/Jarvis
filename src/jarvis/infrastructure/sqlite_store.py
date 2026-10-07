@@ -36,6 +36,7 @@ from jarvis.domain.types import (
     TextPart,
     Turn,
     TurnStatus,
+    VisionInput,
 )
 from jarvis.infrastructure.artifacts import verify_artifact
 
@@ -232,6 +233,7 @@ class SqliteStore:
             (3, "003_tools.sql"),
             (4, "004_jobs.sql"),
             (5, "005_images.sql"),
+            (6, "006_vision.sql"),
         ):
             script = (
                 resources.files("jarvis")
@@ -1359,7 +1361,10 @@ class SqliteStore:
         submission_id: str,
         job_id: str | None = None,
         profile_name: str = "fake",
+        vision: VisionInput | None = None,
     ) -> tuple[Turn, bool]:
+        if vision is not None and job_id is None:
+            raise ValueError("Vision submission requires a durable job")
         if not text or len(text) > 65_536:
             raise ValueError("Message must be 1–65,536 characters")
         if not submission_id or len(submission_id) > 200:
@@ -1367,8 +1372,12 @@ class SqliteStore:
         with self._transaction():
             self.get_conversation(conversation_id)
             prior = self._conn.execute(
-                "SELECT t.*, m.content_json FROM turns t "
+                "SELECT t.*, m.content_json, v.artifact_id AS vision_artifact_id, "
+                "a.sha256 AS vision_sha256, v.profile_name AS vision_profile "
+                "FROM turns t "
                 "JOIN messages m ON m.turn_id=t.id AND m.role='user' "
+                "LEFT JOIN vision_inputs v ON v.turn_id=t.id "
+                "LEFT JOIN artifacts a ON a.id=v.artifact_id "
                 "WHERE t.conversation_id=? AND t.submission_id=?",
                 (conversation_id, submission_id),
             ).fetchone()
@@ -1376,6 +1385,16 @@ class SqliteStore:
                 if json.loads(prior["content_json"])[0]["text"] != text:
                     raise SubmissionConflict(
                         "Submission ID was already used with different text"
+                    )
+                if (vision is None) != (prior["vision_artifact_id"] is None) or (
+                    vision is not None
+                    and (
+                        vision.sha256 != prior["vision_sha256"]
+                        or vision.profile_name != prior["vision_profile"]
+                    )
+                ):
+                    raise SubmissionConflict(
+                        "Submission ID was already used with a different screenshot"
                     )
                 return self._turn(prior), False
             active = self._conn.execute(
@@ -1471,7 +1490,56 @@ class SqliteStore:
                     "VALUES (?, ?, 0, 'chat', 'queued', 0, ?, ?)",
                     (f"{job_id}:chat", job_id, now, now),
                 )
+                if vision is not None:
+                    if vision.job_id != job_id or vision.profile_name != profile_name:
+                        raise ValueError("Vision submission identity mismatch")
+                    self._conn.execute(
+                        "INSERT INTO artifacts (id, job_id, relative_path, kind, "
+                        "size_bytes, sha256, status, created_at) "
+                        "VALUES (?, ?, ?, 'screenshot/png', ?, ?, 'available', ?)",
+                        (
+                            vision.artifact_id,
+                            job_id,
+                            vision.relative_path,
+                            vision.size_bytes,
+                            vision.sha256,
+                            now,
+                        ),
+                    )
+                    self._conn.execute(
+                        "INSERT INTO vision_inputs (turn_id, artifact_id, profile_name, width, height) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (
+                            turn.id,
+                            vision.artifact_id,
+                            vision.profile_name,
+                            vision.width,
+                            vision.height,
+                        ),
+                    )
             return turn, True
+
+    @_on_owner
+    def get_vision_input(self, turn_id: str) -> VisionInput | None:
+        row = self._conn.execute(
+            "SELECT v.artifact_id, a.job_id, a.relative_path, a.size_bytes, "
+            "a.sha256, v.width, v.height, v.profile_name "
+            "FROM vision_inputs v JOIN artifacts a ON a.id=v.artifact_id "
+            "WHERE v.turn_id=?",
+            (turn_id,),
+        ).fetchone()
+        return VisionInput(**dict(row)) if row is not None else None
+
+    @_on_owner
+    def get_user_message(self, turn_id: str) -> Message:
+        row = self._conn.execute(
+            "SELECT m.*, t.status AS turn_status FROM messages m "
+            "JOIN turns t ON t.id=m.turn_id WHERE m.turn_id=? AND m.role='user'",
+            (turn_id,),
+        ).fetchone()
+        if row is None:
+            raise StaleTurnError("User message is missing")
+        return self._message(row)
 
     @_on_owner
     def complete_turn(

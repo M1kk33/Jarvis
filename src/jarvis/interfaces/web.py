@@ -1,6 +1,8 @@
 """Single-user loopback browser interface; policy stays in application services."""
 
 import asyncio
+import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -26,6 +28,7 @@ from jarvis.application.jobs import JobRunner
 from jarvis.application.speech import MAX_CLIP_BYTES, SpeechService
 from jarvis.application.spoken import SpokenPlaybackService
 from jarvis.application.tools import ToolService
+from jarvis.application.vision import MAX_SCREENSHOT_BYTES, validate_screenshot
 from jarvis.domain.jobs import TERMINAL_JOBS, Job, JobStatus
 from jarvis.domain.resources import ResourceError
 from jarvis.domain.speech import SpeechInvalid, SpeechUnavailable
@@ -39,6 +42,7 @@ from jarvis.domain.types import (
 )
 
 BODY_LIMIT = 131_072
+VISION_BODY_LIMIT = 3 * 1024 * 1024
 COOKIE_NAME = "jarvis_session"
 
 
@@ -57,6 +61,12 @@ class _Conversation(_Input):
 class _Send(_Input):
     text: str = Field(min_length=1, max_length=65_536)
     submission_id: str = Field(min_length=1, max_length=200)
+
+
+class _VisionSend(_Input):
+    question: str = Field(min_length=1, max_length=1024)
+    submission_id: str = Field(min_length=1, max_length=200)
+    image_base64: str = Field(min_length=1, max_length=2_796_208)
 
 
 class _Speak(_Input):
@@ -78,7 +88,9 @@ def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-async def _body[T: BaseModel](request: Request, model: type[T]) -> T:
+async def _body[T: BaseModel](
+    request: Request, model: type[T], limit: int = BODY_LIMIT
+) -> T:
     if (
         request.headers.get("content-type", "").split(";", 1)[0].lower()
         != "application/json"
@@ -87,7 +99,7 @@ async def _body[T: BaseModel](request: Request, model: type[T]) -> T:
     raw = bytearray()
     async for chunk in request.stream():
         raw.extend(chunk)
-        if len(raw) > BODY_LIMIT:
+        if len(raw) > limit:
             raise HTTPException(413, "Request body is too large")
     try:
         return model.model_validate(
@@ -161,6 +173,8 @@ def create_web_app(
                 if int(length) > (
                     MAX_CLIP_BYTES
                     if request.url.path == "/api/transcribe"
+                    else VISION_BODY_LIMIT
+                    if request.url.path.endswith("/vision")
                     else BODY_LIMIT
                 ):
                     return Response(status_code=413)
@@ -169,7 +183,7 @@ def create_web_app(
         response = await call_next(request)
         response.headers["Content-Security-Policy"] = (
             "default-src 'none'; script-src 'self'; style-src 'self'; "
-            "connect-src 'self'; img-src 'self'; font-src 'self'; "
+            "connect-src 'self'; img-src 'self' blob:; font-src 'self'; "
             "form-action 'self'; base-uri 'none'; frame-ancestors 'none'; "
             "object-src 'none'"
         )
@@ -338,6 +352,7 @@ def create_web_app(
             "csrf_token": csrf_token,
             "speech_enabled": speech is not None,
             "spoken_enabled": spoken is not None,
+            "vision_enabled": runner.vision is not None,
         }
 
     @app.get("/api/conversations")
@@ -392,6 +407,32 @@ def create_web_app(
             status_code=200 if duplicate else 202,
         )
 
+    @app.post("/api/conversations/{conversation_id}/vision")
+    async def send_vision(request: Request, conversation_id: str):
+        authorize(request, mutate=True)
+        if runner.vision is None:
+            raise HTTPException(404, "Vision is not configured")
+        supplied = await _body(request, _VisionSend, VISION_BODY_LIMIT)
+        try:
+            image = base64.b64decode(supplied.image_base64, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise HTTPException(422, "Screenshot is not valid base64") from exc
+        if len(image) > MAX_SCREENSHOT_BYTES:
+            raise HTTPException(413, "Screenshot is too large")
+        try:
+            validate_screenshot(image)
+        except RequestFailure as exc:
+            raise HTTPException(422, str(exc)) from exc
+        job, duplicate = await runner.submit_vision(
+            conversation_id, supplied.question, image, supplied.submission_id
+        )
+        if not duplicate and job.status is JobStatus.QUEUED:
+            runner.launch(job.id)
+        return JSONResponse(
+            {"job": _job(job), "duplicate": duplicate},
+            status_code=200 if duplicate else 202,
+        )
+
     @app.get("/api/jobs")
     async def jobs(request: Request):
         authorize(request)
@@ -422,7 +463,10 @@ def create_web_app(
             JobStatus.WAITING_APPROVAL,
         }:
             raise HTTPException(409, "Job cannot resume")
-        if job.profile_name != runner.profile_identity:
+        if job.profile_name not in {
+            runner.profile_identity,
+            runner.vision.profile_identity if runner.vision is not None else "",
+        }:
             raise HTTPException(409, "Job requires its original pinned profile")
         runner.launch(job_id)
         return JSONResponse({"job": _job(job)}, status_code=202)
@@ -577,7 +621,10 @@ def create_web_app(
             data = await runner.store.run(
                 lambda: runner.store.get_artifact_bytes(artifact_id)
             )
-            validate_png(data)
+            try:
+                validate_png(data)
+            except RequestFailure:
+                validate_screenshot(data)
         except (ValueError, OSError, RequestFailure) as exc:
             raise HTTPException(404, "Image is unavailable") from exc
         return Response(

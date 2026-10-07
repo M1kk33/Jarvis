@@ -24,6 +24,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--speech-profile", help="Pinned CPU speech profile (web only)")
     parser.add_argument("--piper-profile", help="Pinned CPU voice profile (web only)")
     parser.add_argument(
+        "--vision-profile", help="Pinned screenshot vision profile (web only)"
+    )
+    parser.add_argument(
         "--read-root",
         action="append",
         default=[],

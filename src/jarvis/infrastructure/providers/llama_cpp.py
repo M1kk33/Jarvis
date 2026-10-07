@@ -1,6 +1,7 @@
 """Authenticated, bounded llama.cpp chat and supervised server lifecycle."""
 
 import asyncio
+import base64
 import json
 import os
 import secrets
@@ -25,6 +26,7 @@ from jarvis.domain.types import (
     StreamToolCall,
 )
 from jarvis.infrastructure.local_profile import LocalTextProfile
+from jarvis.infrastructure.vision_profile import LocalVisionProfile
 from jarvis.infrastructure.windows_process import (
     OwnedProcess,
     WindowsProcessSupervisor,
@@ -100,7 +102,9 @@ def _bounded_lines(response: httpx.Response) -> Iterator[str]:
 
 
 class LlamaServerRuntime:
-    def __init__(self, profile: LocalTextProfile, run_root: Path) -> None:
+    def __init__(
+        self, profile: LocalTextProfile | LocalVisionProfile, run_root: Path
+    ) -> None:
         self.profile = profile
         self.run_root = run_root.resolve()
         self.run_root.mkdir(parents=True, exist_ok=True)
@@ -119,7 +123,7 @@ class LlamaServerRuntime:
         self, profile: RuntimeProfile, generation: int, cancel: Event, job_name: str
     ) -> RuntimeIdentity:
         if profile.name != self.profile.name:
-            raise RuntimeStartFailure("Wrong pinned text profile")
+            raise RuntimeStartFailure("Wrong pinned llama.cpp profile")
         await asyncio.to_thread(self.profile.verify_artifacts)
         if cancel.is_set():
             raise RuntimeStartFailure("Local model load was cancelled")
@@ -179,6 +183,17 @@ class LlamaServerRuntime:
             "--no-context-shift",
             "--jinja",
         ]
+        if isinstance(self.profile, LocalVisionProfile):
+            arguments.extend(
+                [
+                    "--mmproj",
+                    str(self.profile.projector),
+                    "--image-max-tokens",
+                    str(self.profile.image_max_tokens),
+                    "--image-min-tokens",
+                    "256",
+                ]
+            )
         self._job_names[generation] = job_name
         process = await asyncio.to_thread(
             self.supervisor.spawn,
@@ -430,6 +445,56 @@ class LlamaChatProvider:
     ) -> Iterator[StreamEvent]:
         return self._stream(messages, cancel, instructions, None)
 
+    @staticmethod
+    def _vision_messages(
+        question: str, image: bytes, instructions: str
+    ) -> list[dict[str, object]]:
+        return [
+            {"role": "system", "content": instructions},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": question},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/png;base64,"
+                            + base64.b64encode(image).decode("ascii")
+                        },
+                    },
+                ],
+            },
+        ]
+
+    def count_vision_tokens(
+        self, question: str, image: bytes, instructions: str
+    ) -> int:
+        endpoint = self.runtime.endpoint
+        with httpx.Client(
+            base_url=endpoint.base_url,
+            trust_env=False,
+            timeout=30,
+            transport=self.transport,
+        ) as client:
+            response = client.post(
+                "/v1/chat/completions/input_tokens",
+                headers={"Authorization": f"Bearer {endpoint.api_key}"},
+                json={
+                    "messages": self._vision_messages(question, image, instructions),
+                    "max_tokens": 512,
+                },
+            )
+            self._check_status(response)
+            count = response.json().get("input_tokens")
+            if type(count) is not int or count < 0:
+                raise ProviderFailure("backend_crashed", "Invalid vision token count")
+            return count
+
+    def stream_vision(
+        self, question: str, image: bytes, cancel: Event, instructions: str
+    ) -> Iterator[StreamEvent]:
+        return self._stream((), cancel, instructions, None, vision=(question, image))
+
     def stream_with_tools(
         self,
         messages: Sequence[ContextRecord],
@@ -445,16 +510,23 @@ class LlamaChatProvider:
         cancel: Event,
         instructions: str,
         tools: list[dict[str, object]] | None,
+        vision: tuple[str, bytes] | None = None,
     ) -> Iterator[StreamEvent]:
         endpoint = self.runtime.endpoint
         deadline = time.monotonic() + 120
         headers = {"Authorization": f"Bearer {endpoint.api_key}"}
         payload: dict[str, object] = {
-            "messages": _messages(messages, instructions),
+            "messages": (
+                self._vision_messages(vision[0], vision[1], instructions)
+                if vision is not None
+                else _messages(messages, instructions)
+            ),
             "max_tokens": 512,
             "stream": True,
             "parse_tool_calls": tools is not None,
         }
+        if vision is not None:
+            payload["temperature"] = 0
         if tools is not None:
             payload["tools"] = tools
             payload["parallel_tool_calls"] = False

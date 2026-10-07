@@ -52,6 +52,27 @@ if (setupForm) {
   let discardTranscript = false;
   const stopVoiceButton = document.getElementById("stop-voice");
   const voiceStatus = document.getElementById("voice-status");
+  const visionControls = document.getElementById("vision-controls");
+  const screenshotInput = document.getElementById("screenshot-input");
+  const screenshotPreview = document.getElementById("screenshot-preview");
+  let previewUrl = null;
+
+  function clearScreenshot() {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = null;
+    screenshotPreview.hidden = true;
+    screenshotPreview.removeAttribute("src");
+    screenshotInput.value = "";
+  }
+
+  function imageBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Could not read the screenshot."));
+      reader.onload = () => resolve(String(reader.result).split(",", 2)[1]);
+      reader.readAsDataURL(file);
+    });
+  }
 
   async function api(path, method = "GET", payload = undefined) {
     const headers = {};
@@ -149,20 +170,21 @@ if (setupForm) {
           }
         }
         for (const artifact of artifacts.get(message.turn_id) || []) {
-          if (!/^[0-9a-f-]{36}$/.test(artifact.id) || artifact.kind !== "image/png") continue;
+          if (!/^[0-9a-f-]{36}$/.test(artifact.id)
+              || !["image/png", "screenshot/png"].includes(artifact.kind)) continue;
           if (artifact.status !== "available") {
             line(card, `Image ${artifact.id} is unavailable`, "subtle");
             continue;
           }
           const preview = document.createElement("img");
           preview.className = "generated-image";
-          preview.alt = `Generated image ${artifact.id}`;
+          preview.alt = artifact.kind === "screenshot/png" ? "Source screenshot" : `Generated image ${artifact.id}`;
           preview.loading = "lazy";
           preview.src = `/api/artifacts/${artifact.id}/preview`;
           card.append(preview);
           const download = document.createElement("a");
           download.href = `/api/artifacts/${artifact.id}`;
-          download.textContent = `Download image ${artifact.id}`;
+          download.textContent = artifact.kind === "screenshot/png" ? "Download source screenshot" : `Download image ${artifact.id}`;
           card.append(download);
         }
       }
@@ -178,6 +200,7 @@ if (setupForm) {
     for (const conversation of data.conversations) {
       const item = button(conversation.title, async () => {
         voicePlayer.stop();
+        clearScreenshot();
         if (state.source) state.source.close();
         state.source = null;
         draftNode.textContent = "";
@@ -296,27 +319,54 @@ if (setupForm) {
     if (title === null) return;
     try {
       const created = await api("/api/conversations", "POST", { title });
+      clearScreenshot();
       state.selected = created.id;
       await refreshAll();
     } catch (error) { say(error.message); }
   });
   document.getElementById("refresh").addEventListener("click", () => refreshAll().catch((error) => say(error.message)));
+  screenshotInput.addEventListener("change", () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = null;
+    const file = screenshotInput.files[0];
+    if (!file) { screenshotPreview.hidden = true; screenshotPreview.removeAttribute("src"); return; }
+    if (file.type !== "image/png" || file.size > 2 * 1024 * 1024) {
+      clearScreenshot();
+      say("Choose a PNG screenshot no larger than 2 MiB.");
+      return;
+    }
+    previewUrl = URL.createObjectURL(file);
+    screenshotPreview.src = previewUrl;
+    screenshotPreview.hidden = false;
+    say("");
+  });
   document.getElementById("send-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     voicePlayer.stop();
     if (!state.selected) { say("Create a conversation first."); return; }
     const text = inputNode.value;
-    if (!state.pending || state.pending.text !== text) {
-      state.pending = { text, id: crypto.randomUUID() };
+    const screenshot = screenshotInput.files[0] || null;
+    if (screenshot && text.length > 1024) {
+      say("A screenshot question can be at most 1,024 characters.");
+      return;
+    }
+    if (!state.pending || state.pending.text !== text || state.pending.file !== screenshot) {
+      state.pending = { text, file: screenshot, id: crypto.randomUUID() };
     }
     const sendButton = document.getElementById("send-button");
     sendButton.disabled = true;
     try {
-      const result = await api(`/api/conversations/${encodeURIComponent(state.selected)}/messages`, "POST", {
-        text, submission_id: state.pending.id,
-      });
+      const result = screenshot
+        ? await api(`/api/conversations/${encodeURIComponent(state.selected)}/vision`, "POST", {
+          question: text, submission_id: state.pending.id,
+          image_base64: await imageBase64(screenshot),
+        })
+        : await api(`/api/conversations/${encodeURIComponent(state.selected)}/messages`, "POST", {
+          text, submission_id: state.pending.id,
+        });
       state.pending = null;
       inputNode.value = "";
+      clearScreenshot();
       listen(result.job.id);
       await refreshAll();
     } catch (error) { say(error.message); }
@@ -413,6 +463,7 @@ if (setupForm) {
     state.csrf = session.csrf_token;
     state.spokenEnabled = session.spoken_enabled;
     speechControls.hidden = !session.speech_enabled;
+    visionControls.hidden = !session.vision_enabled;
     return refreshAll();
   }).catch((error) => say(error.message));
 }

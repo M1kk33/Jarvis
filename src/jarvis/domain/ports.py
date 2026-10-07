@@ -7,7 +7,14 @@ from typing import Protocol, TypeVar, runtime_checkable
 
 from jarvis.domain.jobs import Job, JobStep
 from jarvis.domain.tools import Approval, ContextRecord, ToolInvocation
-from jarvis.domain.types import Conversation, Draft, Message, StreamEvent, Turn
+from jarvis.domain.types import (
+    Conversation,
+    Draft,
+    Message,
+    StreamEvent,
+    Turn,
+    VisionInput,
+)
 
 T = TypeVar("T")
 
@@ -15,6 +22,15 @@ T = TypeVar("T")
 class ChatProvider(Protocol):
     def stream(
         self, messages: Sequence[Message], cancel: Event, instructions: str = ""
+    ) -> Iterator[StreamEvent]: ...
+
+
+class VisionProvider(Protocol):
+    def count_vision_tokens(
+        self, question: str, image: bytes, instructions: str
+    ) -> int: ...
+    def stream_vision(
+        self, question: str, image: bytes, cancel: Event, instructions: str
     ) -> Iterator[StreamEvent]: ...
 
 
@@ -168,6 +184,8 @@ class ImageStore(Protocol):
 
 
 class JobStore(Protocol):
+    data_dir: Path
+
     async def run(self, operation: Callable[[], T]) -> T: ...
     def begin_turn(
         self,
@@ -176,7 +194,13 @@ class JobStore(Protocol):
         submission_id: str,
         job_id: str | None = None,
         profile_name: str = "fake",
+        vision: VisionInput | None = None,
     ) -> tuple[Turn, bool]: ...
+    def get_vision_input(self, turn_id: str) -> VisionInput | None: ...
+    def get_user_message(self, turn_id: str) -> Message: ...
+    def checkpoint_draft(
+        self, turn_id: str, text: str, expected_job_attempt: int | None = None
+    ) -> None: ...
     def get_job(self, job_id: str) -> Job: ...
     def get_job_by_turn(self, turn_id: str) -> Job | None: ...
     def list_jobs(self, conversation_id: str | None = None) -> list[Job]: ...

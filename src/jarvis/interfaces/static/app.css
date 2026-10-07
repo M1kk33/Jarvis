@@ -36,6 +36,10 @@ h2 { font-size: .86rem; text-transform: uppercase; letter-spacing: .06em; color:
 .speech-controls[hidden], .speech-controls button[hidden] { display: none; }
 .speech-controls button { justify-self: auto; }
 .speech-controls span { color: #58647a; font-size: .88rem; }
+.vision-controls { display: grid; gap: .45rem; }
+.vision-controls[hidden], .vision-controls img[hidden] { display: none; }
+.vision-controls img { max-width: 240px; max-height: 180px; object-fit: contain; border: 1px solid #bac6da; }
+.vision-controls .subtle { color: #66748d; font-size: .78rem; }
 .notice { min-height: 1.2rem; color: #8b302c; margin: .4rem 1.8rem; font-size: .9rem; }
 .card { border: 1px solid #e1e6ef; border-radius: 10px; padding: .85rem; margin-bottom: .65rem; overflow-wrap: anywhere; }
 .card .subtle { color: #66748d; font-size: .78rem; }

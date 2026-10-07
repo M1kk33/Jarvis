@@ -39,6 +39,12 @@
           <button id="cancel-transcription" type="button" class="quiet" hidden>Cancel transcription</button>
           <span id="speech-status" role="status"></span>
         </div>
+        <div id="vision-controls" class="vision-controls" hidden>
+          <label for="screenshot-input">Screenshot (optional PNG, max 2 MiB and 1024 × 1024; question max 1,024 characters)</label>
+          <input id="screenshot-input" type="file" accept="image/png">
+          <img id="screenshot-preview" alt="Selected screenshot preview" hidden>
+          <span class="subtle">When sent, the screenshot is saved with this conversation and included in Jarvis backups. Jarvis has no screenshot deletion control yet.</span>
+        </div>
         <button id="send-button" type="submit">Send</button>
       </form>
       <p id="notice" class="notice" role="status"></p>

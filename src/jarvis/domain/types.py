@@ -138,3 +138,15 @@ class SendResult:
     turn: Turn
     answer: Message | None
     duplicate: bool
+
+
+@dataclass(frozen=True)
+class VisionInput:
+    artifact_id: str
+    job_id: str
+    relative_path: str
+    size_bytes: int
+    sha256: str
+    width: int
+    height: int
+    profile_name: str

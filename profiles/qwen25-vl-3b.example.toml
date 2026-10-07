@@ -1,0 +1,22 @@
+# One screenshot, 1024 x 1024 maximum. Peaks are provisional until measured.
+# ggml-org/Qwen2.5-VL-3B-Instruct-GGUF revision
+# 5037fcf163dd95d1e41d1974465f0898ed108ca2. Matching Q4_K_M + Q8_0 projector.
+# Reuses pinned llama.cpp b11429 (commit d81235049), Windows CUDA 12.4.
+[vision_model]
+name = "qwen25-vl-3b-q4_k_m"
+runtime_version = "b11429"
+model_revision = "5037fcf163dd95d1e41d1974465f0898ed108ca2"
+executable = "runtimes/llama-b11429/bin/llama-server.exe"
+executable_sha256 = "7e236243c9b670c6a49410c03186fd575c57a0efe3fd8a21d8727503d571d5b6"
+model = "models/qwen25-vl-3b/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf"
+model_sha256 = "d02fe9b69ad8cadbbd228e387667af66612c44bed29ffc8eb1e7caf9ac486c12"
+projector = "models/qwen25-vl-3b/mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf"
+projector_sha256 = "980c9b2f78c04e6cff93d277ada09e768394f112d75db3b4e9dea8a69f9fb904"
+device_uuid = "GPU-bfa7eedf-5d52-9ccf-76e2-86b3891ab4d7"
+device_index = 0
+cold_vram_gib = 5.5
+cold_ram_gib = 6.0
+warm_vram_headroom_gib = 0.5
+warm_ram_headroom_gib = 0.5
+calibrated = false
+image_max_tokens = 1024

@@ -18,6 +18,7 @@ from jarvis.application.resource_manager import ResourceManager, RuntimeRouter
 from jarvis.application.speech import SpeechService
 from jarvis.application.spoken import SpokenPlaybackService
 from jarvis.application.tools import ToolPolicy, ToolService
+from jarvis.application.vision import VisionService
 from jarvis.domain.ports import ChatProvider
 from jarvis.domain.resource_ports import ManagedRuntime
 from jarvis.domain.resources import ResourceError
@@ -41,6 +42,7 @@ from jarvis.infrastructure.resource_probe import NvidiaResourceProbe, SystemCloc
 from jarvis.infrastructure.speech import CpuSpeechTranscriber, SystemRamProbe
 from jarvis.infrastructure.speech_profile import SpeechProfile
 from jarvis.infrastructure.sqlite_store import SqliteStore
+from jarvis.infrastructure.vision_profile import LocalVisionProfile
 from jarvis.interfaces.cli import dispatch, parse_args
 
 
@@ -57,6 +59,8 @@ def main(argv: list[str] | None = None) -> int:
                 provider: ChatProvider = FakeChatProvider()
                 profile: LocalTextProfile | None = None
                 image_profile: LocalImageProfile | None = None
+                vision_profile: LocalVisionProfile | None = None
+                vision_runtime: LlamaServerRuntime | None = None
                 probe = None
                 if args.image_profile and not args.profile:
                     raise ValueError("Image profile requires the pinned text profile")
@@ -64,6 +68,8 @@ def main(argv: list[str] | None = None) -> int:
                     raise ValueError("Speech profile is available only in web")
                 if args.piper_profile and args.command != "web":
                     raise ValueError("Piper profile is available only in web")
+                if args.vision_profile and (args.command != "web" or not args.profile):
+                    raise ValueError("Vision requires a model-backed web session")
                 if args.command == "calibrate" and not args.profile:
                     raise ValueError("Calibration requires --profile")
                 if args.read_root and (
@@ -116,6 +122,21 @@ def main(argv: list[str] | None = None) -> int:
                             image_profile, store.data_dir / "run"
                         )
                         runtimes[image_profile.name] = image_runtime
+                    if args.vision_profile:
+                        vision_profile = LocalVisionProfile.from_file(
+                            Path(args.vision_profile), store.data_dir
+                        )
+                        if (
+                            vision_profile.device_uuid != profile.device_uuid
+                            or vision_profile.device_index != profile.device_index
+                        ):
+                            raise ValueError(
+                                "Text and vision profiles must select the same GPU"
+                            )
+                        vision_runtime = LlamaServerRuntime(
+                            vision_profile, store.data_dir / "run"
+                        )
+                        runtimes[vision_profile.name] = vision_runtime
                     probe = NvidiaResourceProbe(
                         profile.device_uuid, profile.device_index
                     )
@@ -296,7 +317,27 @@ def main(argv: list[str] | None = None) -> int:
                     if profile is not None
                     else "fake"
                 )
-                runner = JobRunner(store, service, profile_identity)
+                vision_service = None
+                if vision_profile is not None:
+                    assert vision_runtime is not None and manager is not None
+                    vision_identity = ":".join(
+                        (
+                            vision_profile.name,
+                            vision_profile.device_uuid,
+                            str(vision_profile.device_index),
+                            vision_profile.executable_sha256,
+                            vision_profile.model_sha256,
+                            vision_profile.projector_sha256,
+                        )
+                    )
+                    vision_service = VisionService(
+                        store,
+                        LlamaChatProvider(vision_runtime),
+                        manager,
+                        vision_profile.admission_profile(),
+                        vision_identity,
+                    )
+                runner = JobRunner(store, service, profile_identity, vision_service)
                 if args.command == "web":
                     if not 1024 <= args.port <= 65535:
                         raise ValueError("Web port must be between 1024 and 65535")
