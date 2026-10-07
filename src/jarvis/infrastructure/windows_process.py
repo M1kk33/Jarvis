@@ -21,6 +21,7 @@ CREATE_UNICODE_ENVIRONMENT = 0x00000400
 CREATE_NO_WINDOW = 0x08000000
 STARTF_USESTDHANDLES = 0x00000100
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
 JOB_OBJECT_BASIC_PROCESS_ID_LIST = 3
@@ -479,11 +480,14 @@ class WindowsProcessSupervisor:
         after_create: Callable[[int, int], None] | None = None,
         job_name: str | None = None,
         stdin_data: bytes | None = None,
+        job_memory_bytes: int | None = None,
     ) -> OwnedProcess:
         executable = executable.resolve(strict=True)
         cwd = cwd.resolve(strict=True)
         if not executable.is_absolute() or not cwd.is_dir():
             raise ValueError("Explicit executable and working directory are required")
+        if job_memory_bytes is not None and job_memory_bytes <= 0:
+            raise ValueError("Job memory limit must be positive")
         job = _kernel.CreateJobObjectW(None, job_name)
         _check(job, "CreateJobObjectW")
         if job_name is not None and ctypes.get_last_error() == 183:
@@ -491,6 +495,9 @@ class WindowsProcessSupervisor:
             raise RuntimeError("Named Job Object already exists")
         info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
         info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if job_memory_bytes is not None:
+            info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY
+            info.JobMemoryLimit = job_memory_bytes
         created_process = False
         stdout_read = stderr_read = -1
         stdout_write = stderr_write = -1

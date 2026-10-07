@@ -176,10 +176,7 @@ class PublicPageFetcher:
         assert isinstance(result, list)
         return result
 
-    def execute(self, name: str, arguments: dict[str, object]) -> dict[str, object]:
-        self.inspect(name, arguments)
-        url = arguments["url"]
-        assert isinstance(url, str)
+    def download(self, url: str) -> tuple[bytes, str, int]:
         parsed = _parse(url)
         host = parsed.hostname
         assert host is not None
@@ -276,27 +273,34 @@ class PublicPageFetcher:
                 raise RequestFailure(
                     "invalid_request", "Binary response is unsupported"
                 )
-            text = raw.decode("utf-8", errors="replace")
-            if content_type == "text/html":
-                parser = _Text()
-                parser.feed(text)
-                text = " ".join("".join(parser.parts).split())
-            encoded = text.encode("utf-8")
-            truncated = len(encoded) > _TEXT_LIMIT
-            if truncated:
-                text = encoded[:_TEXT_LIMIT].decode("utf-8", errors="ignore")
-            return {
-                "url": url,
-                "status": response.status,
-                "content_type": content_type,
-                "retrieved_at": datetime.now(UTC).isoformat(timespec="seconds"),
-                "text": text,
-                "truncated": truncated,
-                "trust": "untrusted",
-            }
+            return raw, content_type, response.status
         except TimeoutError as exc:
             raise RequestFailure("timeout", "Page retrieval timed out") from exc
         except (OSError, ssl.SSLError, http.client.HTTPException, zlib.error) as exc:
             raise RequestFailure("unavailable", "Page retrieval failed") from exc
         finally:
             conn.close()
+
+    def execute(self, name: str, arguments: dict[str, object]) -> dict[str, object]:
+        self.inspect(name, arguments)
+        url = arguments["url"]
+        assert isinstance(url, str)
+        raw, content_type, status = self.download(url)
+        text = raw.decode("utf-8", errors="replace")
+        if content_type == "text/html":
+            parser = _Text()
+            parser.feed(text)
+            text = " ".join("".join(parser.parts).split())
+        encoded = text.encode("utf-8")
+        truncated = len(encoded) > _TEXT_LIMIT
+        if truncated:
+            text = encoded[:_TEXT_LIMIT].decode("utf-8", errors="ignore")
+        return {
+            "url": url,
+            "status": status,
+            "content_type": content_type,
+            "retrieved_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "text": text,
+            "truncated": truncated,
+            "trust": "untrusted",
+        }

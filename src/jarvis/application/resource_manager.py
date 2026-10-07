@@ -124,6 +124,7 @@ class ResourceManager:
         self._own_spawn_intent = False
         self._closed = False
         self._cpu_worker = False
+        self._cpu_unavailable = False
 
     @property
     def view(self) -> ResourceView:
@@ -144,7 +145,11 @@ class ResourceManager:
                         "Nested heavy-runtime acquisition is forbidden"
                     )
                 await self._condition.wait()
-            if self._closed or self._state is ResourceState.UNAVAILABLE:
+            if (
+                self._closed
+                or self._state is ResourceState.UNAVAILABLE
+                or self._cpu_unavailable
+            ):
                 raise ResourceUnavailable("Heavy runtime is unavailable")
             self._cancel_idle()
             if self._state is ResourceState.READY and self._profile == profile:
@@ -170,7 +175,11 @@ class ResourceManager:
         async with self._condition:
             while self._state is ResourceState.BUSY or self._cpu_worker:
                 await self._condition.wait()
-            if self._closed or self._state is ResourceState.UNAVAILABLE:
+            if (
+                self._closed
+                or self._state is ResourceState.UNAVAILABLE
+                or self._cpu_unavailable
+            ):
                 raise ResourceUnavailable("Heavy-runtime cleanup is unverified")
             self._cpu_worker = True
         try:
@@ -181,6 +190,12 @@ class ResourceManager:
     async def _release_cpu_worker(self) -> None:
         async with self._condition:
             self._cpu_worker = False
+            self._condition.notify_all()
+
+    async def mark_cpu_unavailable(self) -> None:
+        """Keep the shared work slot unavailable after an unverified CPU tree exit."""
+        async with self._condition:
+            self._cpu_unavailable = True
             self._condition.notify_all()
 
     async def _start_locked(self, profile: RuntimeProfile) -> None:

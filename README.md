@@ -1,4 +1,4 @@
-# Jarvis (M13)
+# Jarvis (M14)
 
 Jarvis supports durable terminal and local-browser conversations with a deterministic offline fake or one pinned local Qwen3-4B text model. M8 adds one optional local SD 1.5 image tool with verified text/image handoff and durable PNG artifacts. M9 adds one approval-only tool to create a new UTF-8 `.txt` file in an explicitly granted directory. The browser shows chat, history, jobs, progress, exact-action approvals, and locally generated images on `127.0.0.1`. Durable cancellation, explicit recovery, and verified backup/restore remain available. The three initial read-only tools remain current UTC time, bounded directory listing, and bounded UTF-8 file reading. M13 adds optional, approved public-page retrieval. No shell, edit, or delete tool is available.
 
@@ -8,7 +8,9 @@ M11 adds optional local spoken playback for completed assistant replies. A **Pla
 
 M12 adds one explicit screenshot upload and question in the browser. Add `--vision-profile E:\JarvisData\vision.toml` beside the text `--profile` to enable the preview and local vision model. The screenshot is saved with its question and answer as a private artifact and included in backups; M12 provides no per-screenshot deletion control. See [vision setup and limits](docs/VISION_WORKER.md). The model does not control the screen or authorize tools.
 
-M13 adds `--enable-network` for a model-backed `web` session. The browser asks for a fresh approval showing the exact public HTTP(S) URL, including its path and query, before each GET. Check that URL for private data before approving: the whole path and query are sent to the site. Retrieval accepts HTML or plain text, extracts bounded text as untrusted evidence, and never follows redirects or loads images/subresources. Local/private/metadata destinations, URL credentials, uploads, cookies, nonstandard ports, and search/browser tools are unavailable. Ordinary chat remains offline without the flag.
+M13 adds `--enable-network` for a model-backed `web` session. The browser asks for a fresh approval showing the exact public HTTP(S) URL, including its path and query, before each GET. Check that URL for private data before approving: the whole path and query are sent to the site. Retrieval accepts HTML or plain text, extracts bounded text as untrusted evidence, and never follows redirects or loads images/subresources. Local/private/metadata destinations, URL credentials, uploads, cookies, nonstandard ports, and search tools are unavailable. Browser rendering requires M14's separate flag. Ordinary chat remains offline without the flag.
+
+M14 adds `--enable-browser` alongside `--enable-network` for a model-backed `web` session. After exact-URL approval, Jarvis fetches the HTML through the M13 destination checks, then renders it in a fresh, offline Playwright Chromium worker. It returns bounded rendered text and a private screenshot. Inline JavaScript can update the page; external scripts, images, frames, page-initiated requests, redirects, popups, downloads, and service workers are blocked. This deliberately supports self-contained JavaScript pages, not general logged-in or asset-heavy sites. See [browser setup and limits](docs/BROWSER_WORKER.md).
 
 ## Setup
 

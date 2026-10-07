@@ -11,6 +11,9 @@ dependencies = [
     "uvicorn>=0.34,<1",
 ]
 
+[project.optional-dependencies]
+browser = ["playwright==1.63.0"]
+
 [dependency-groups]
 dev = [
     "mypy>=2.4.0",

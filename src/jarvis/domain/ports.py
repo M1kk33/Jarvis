@@ -183,6 +183,34 @@ class ImageStore(Protocol):
     ) -> ToolInvocation: ...
 
 
+class PageDownloader(Protocol):
+    def inspect(self, name: str, arguments: dict[str, object]) -> str: ...
+    def download(self, url: str) -> tuple[bytes, str, int]: ...
+
+
+class BrowserRenderer(Protocol):
+    @property
+    def identity(self) -> str: ...
+    async def render(self, html: bytes) -> tuple[str, bool, bytes]: ...
+
+
+class BrowserStore(Protocol):
+    data_dir: Path
+
+    async def run(self, operation: Callable[[], T]) -> T: ...
+    def get_invocation(self, invocation_id: str) -> ToolInvocation: ...
+    def commit_browser_result(
+        self,
+        invocation_id: str,
+        artifact_id: str,
+        relative_path: str,
+        size_bytes: int,
+        sha256: str,
+        receipt_json: str,
+        result_json: str,
+    ) -> ToolInvocation: ...
+
+
 class JobStore(Protocol):
     data_dir: Path
 

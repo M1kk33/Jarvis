@@ -8,6 +8,7 @@ from pathlib import Path
 
 import psutil
 
+from jarvis.application.browser import BrowserService
 from jarvis.application.calibration import calibrate
 from jarvis.application.context import ContextBuilder, PreflightTokenEstimator
 from jarvis.application.conversations import ConversationService
@@ -24,6 +25,8 @@ from jarvis.domain.resource_ports import ManagedRuntime
 from jarvis.domain.resources import ResourceError
 from jarvis.domain.types import ConversationError
 from jarvis.infrastructure.backup import create_backup, restore_backup
+from jarvis.infrastructure.browser_profile import BrowserProfile
+from jarvis.infrastructure.browser_renderer import SafeBrowserRenderer
 from jarvis.infrastructure.create_tools import SafeFileCreator
 from jarvis.infrastructure.diagnostics import Diagnostics
 from jarvis.infrastructure.gpu_lock import NamedGpuLock
@@ -93,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
                     raise ValueError(
                         "Network retrieval requires a model-backed web session"
                     )
+                if args.enable_browser and not args.enable_network:
+                    raise ValueError("Browser requires --enable-network")
                 if args.profile and args.command in {
                     "send",
                     "session",
@@ -263,6 +268,8 @@ def main(argv: list[str] | None = None) -> int:
                         capabilities.add("read_files")
                     if args.enable_network:
                         capabilities.add("network")
+                    if args.enable_browser:
+                        capabilities.add("browser")
                     file_service = None
                     if args.write_root:
                         capabilities.add("write_files")
@@ -282,12 +289,28 @@ def main(argv: list[str] | None = None) -> int:
                             manager,
                             image_profile.admission_profile(),
                         )
+                    web_backend = PublicPageFetcher() if args.enable_network else None
+                    browser_service = None
+                    if args.enable_browser:
+                        assert manager is not None and web_backend is not None
+                        browser_service = BrowserService(
+                            store,
+                            web_backend,
+                            SafeBrowserRenderer(
+                                BrowserProfile.installed(),
+                                store.data_dir / "run" / "browser",
+                            ),
+                            SystemRamProbe(),
+                            manager,
+                        )
                     tool_service = ToolService(
                         store,
                         backend,
                         ToolPolicy(
                             version=(
-                                "m13-v1"
+                                "m14-v1"
+                                if args.enable_browser
+                                else "m13-v1"
                                 if args.enable_network
                                 else "m9-v1"
                                 if file_service is not None
@@ -298,9 +321,8 @@ def main(argv: list[str] | None = None) -> int:
                         diagnostics,
                         image_service=image_service,
                         file_service=file_service,
-                        web_backend=PublicPageFetcher()
-                        if args.enable_network
-                        else None,
+                        web_backend=web_backend,
+                        browser_service=browser_service,
                     )
                 if args.command == "reconcile-file":
                     assert tool_service is not None

@@ -53,6 +53,7 @@ async def run_cpu_worker(
     *,
     timeout: float,
     threads: int,
+    job_memory_bytes: int | None = None,
 ) -> dict[str, object]:
     job_name = f"Local\\JarvisCpu-{cwd.name}"
     raw = json.dumps(request, separators=(",", ":")).encode("utf-8") + b"\n"
@@ -67,6 +68,7 @@ async def run_cpu_worker(
                 cpu_environment(python, cwd, threads),
                 job_name=job_name,
                 stdin_data=raw,
+                job_memory_bytes=job_memory_bytes,
             )
         )
         try:

@@ -282,6 +282,12 @@ if (setupForm) {
         url.textContent = item.preview.url;
         card.append(url);
         line(card, "The full path and query are sent to the website. Check for private data before approving. Redirects need a new request.", "subtle");
+      } else if (item.name === "render_public_page" && item.preview) {
+        line(card, "Fetch this exact public URL, then render its HTML in a disposable offline browser:");
+        const url = document.createElement("pre");
+        url.textContent = item.preview.url;
+        card.append(url);
+        line(card, "The full path and query are sent to the website. Check for private data before approving. Inline JavaScript runs; external resources, page requests, and redirects are blocked.", "subtle");
       } else {
         const argumentsText = document.createElement("pre");
         argumentsText.textContent = item.arguments;

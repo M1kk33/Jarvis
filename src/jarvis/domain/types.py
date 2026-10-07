@@ -61,6 +61,10 @@ class NoEffectFailure(RequestFailure):
     """The operation failed before any external side effect began."""
 
 
+class BrowserCleanupUnverified(RequestFailure):
+    """The disposable browser tree could not be proven absent."""
+
+
 class StorageFailure(ConversationError):
     pass
 

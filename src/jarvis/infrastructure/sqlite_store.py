@@ -1034,6 +1034,57 @@ class SqliteStore:
         return self.get_invocation(invocation_id)
 
     @_on_owner
+    def commit_browser_result(
+        self,
+        invocation_id: str,
+        artifact_id: str,
+        relative_path: str,
+        size_bytes: int,
+        sha256: str,
+        receipt_json: str,
+        result_json: str,
+    ) -> ToolInvocation:
+        with self._transaction():
+            row = self._conn.execute(
+                "SELECT i.*, t.status AS turn_status, j.status AS job_status, "
+                "j.cancel_requested, j.attempt AS active_attempt "
+                "FROM tool_invocations i JOIN turns t ON t.id=i.turn_id "
+                "JOIN jobs j ON j.id=i.job_id "
+                "WHERE i.id=? AND i.name='render_public_page'",
+                (invocation_id,),
+            ).fetchone()
+            if (
+                row is None
+                or row["status"] != "intent"
+                or row["turn_status"] != "pending"
+                or row["job_status"] != "running"
+                or row["cancel_requested"]
+                or row["job_attempt"] != row["active_attempt"]
+            ):
+                raise StaleTurnError("Browser intent is no longer active")
+            self._conn.execute(
+                "INSERT INTO artifacts (id, job_id, relative_path, kind, size_bytes, sha256, status, created_at) "
+                "VALUES (?, ?, ?, 'screenshot/png', ?, ?, 'available', ?)",
+                (artifact_id, row["job_id"], relative_path, size_bytes, sha256, _now()),
+            )
+            self._conn.execute(
+                "UPDATE tool_invocations SET status='complete', receipt_json=?, result_json=?, completed_at=? "
+                "WHERE id=?",
+                (receipt_json, result_json, _now(), invocation_id),
+            )
+            self._conn.execute(
+                "UPDATE job_steps SET status='complete', updated_at=? "
+                "WHERE invocation_id=? AND status='running'",
+                (_now(), invocation_id),
+            )
+            self._conn.execute(
+                "UPDATE jobs SET next_step=?, progress='tool_complete', updated_at=? "
+                "WHERE id=? AND status='running' AND cancel_requested=0",
+                (row["ordinal"] + 1, _now(), row["job_id"]),
+            )
+        return self.get_invocation(invocation_id)
+
+    @_on_owner
     def set_image_progress(self, invocation_id: str, stage: str) -> None:
         if stage not in {"image_loading", "image_generating", "image_finalizing"}:
             raise ValueError("Invalid image stage")

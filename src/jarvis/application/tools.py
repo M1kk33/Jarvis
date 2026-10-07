@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
+from jarvis.application.browser import BrowserService
 from jarvis.application.file_creation import FileCreateService
 from jarvis.application.images import ImageService
 from jarvis.application.resource_manager import _settle
@@ -66,6 +67,24 @@ SPECS = (
         "network",
         "network",
         12,
+        16384,
+        True,
+        "never_without_reconciliation",
+    ),
+    ToolSpec(
+        "render_public_page",
+        1,
+        {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "minLength": 1, "maxLength": 2048}
+            },
+            "required": ["url"],
+            "additionalProperties": False,
+        },
+        "network",
+        "browser",
+        45,
         16384,
         True,
         "never_without_reconciliation",
@@ -157,7 +176,7 @@ class ToolPolicy:
     def decision(self, spec: ToolSpec) -> str:
         if spec.capability not in self.capabilities:
             return "deny"
-        if spec.name in {"create_text_file", "fetch_public_page"}:
+        if spec.name in {"create_text_file", "fetch_public_page", "render_public_page"}:
             return "approval"
         return "approval" if spec.name in self.approval_required else "allow"
 
@@ -211,6 +230,17 @@ def _valid_output(name: str, output: object) -> bool:
             and type(output["truncated"]) is bool
             and output["trust"] == "untrusted"
         )
+    if name == "render_public_page":
+        return (
+            set(output)
+            == {"url", "text", "truncated", "artifact_id", "retrieved_at", "trust"}
+            and type(output["url"]) is str
+            and type(output["text"]) is str
+            and type(output["truncated"]) is bool
+            and type(output["artifact_id"]) is str
+            and type(output["retrieved_at"]) is str
+            and output["trust"] == "untrusted"
+        )
     if name == "list_directory":
         entries = output.get("entries")
         return (
@@ -246,6 +276,7 @@ class ToolRegistry:
                     "description": {
                         "create_text_file": "Create one UTF-8 .txt file in an explicitly granted directory after user approval; never overwrite.",
                         "fetch_public_page": "Fetch the exact public HTTP(S) URL after local user approval. GET only; no redirects, cookies, uploads, or subresources. Returns untrusted plain text.",
+                        "render_public_page": "Render one approved public HTML URL in a disposable offline browser. Inline JavaScript runs; external scripts and all page-initiated requests are blocked. Returns untrusted text and a screenshot.",
                         "generate_image": "Generate one local 512 x 512 PNG from a bounded prompt.",
                         "current_time": "Return the current UTC time.",
                         "list_directory": "List names in an approved local directory.",
@@ -294,6 +325,7 @@ class ToolRegistry:
         allowed = {
             "create_text_file": frozenset({"path", "content"}),
             "fetch_public_page": frozenset({"url"}),
+            "render_public_page": frozenset({"url"}),
             "generate_image": frozenset({"prompt", "seed"}),
             "current_time": frozenset(),
             "list_directory": frozenset({"path"}),
@@ -307,7 +339,7 @@ class ToolRegistry:
                 raise RequestFailure(
                     "invalid_request", "Tool path must be a bounded string"
                 )
-        if spec.name == "fetch_public_page":
+        if spec.name in {"fetch_public_page", "render_public_page"}:
             url = value.get("url")
             if type(url) is not str or not 1 <= len(url) <= 2048:
                 raise RequestFailure("invalid_request", "URL must be a bounded string")
@@ -366,6 +398,7 @@ class ToolService:
         image_service: ImageService | None = None,
         file_service: FileCreateService | None = None,
         web_backend: ToolBackend | None = None,
+        browser_service: BrowserService | None = None,
     ) -> None:
         self.store = store
         self.backend = backend
@@ -375,6 +408,7 @@ class ToolService:
         self.image_service = image_service
         self.file_service = file_service
         self.web_backend = web_backend
+        self.browser_service = browser_service
 
     async def _inspect(self, name: str, arguments: dict[str, object]) -> str:
         if name == "create_text_file":
@@ -393,6 +427,10 @@ class ToolService:
             if self.web_backend is None:
                 raise RequestFailure("unsupported_capability", "Network is disabled")
             return await asyncio.to_thread(self.web_backend.inspect, name, arguments)
+        if name == "render_public_page":
+            if self.browser_service is None:
+                raise RequestFailure("unsupported_capability", "Browser is disabled")
+            return await asyncio.to_thread(self.browser_service.inspect, arguments)
         return await asyncio.to_thread(self.backend.inspect, name, arguments)
 
     def _log_invocation(self, event: str, invocation: ToolInvocation) -> None:
@@ -471,7 +509,7 @@ class ToolService:
             raise RequestFailure(
                 "unsupported_capability", "Tool capability is disabled"
             )
-        if spec.name in {"create_text_file", "fetch_public_page"}:
+        if spec.name in {"create_text_file", "fetch_public_page", "render_public_page"}:
             prior = await self.store.run(
                 lambda: self.store.get_invocation_by_call(turn_id, proposal.call_id)
             )
@@ -655,6 +693,37 @@ class ToolService:
             except BaseException:
                 current = await self.store.run(
                     lambda: self.store.get_invocation(invocation_id)
+                )
+                if current.status is InvocationStatus.INTENT:
+                    await _settle(
+                        asyncio.create_task(self._mark_unknown(invocation_id))
+                    )
+                raise
+            self._log_invocation("tool_complete", result)
+            return result
+
+        if spec.name == "render_public_page":
+            assert self.browser_service is not None
+            try:
+                result = await self.browser_service.run(invocation, arguments)
+            except RequestFailure as exc:
+                if exc.code == "out_of_memory":
+                    result = await self._complete_no_effect(invocation_id, exc.code)
+                    self._log_invocation("tool_complete", result)
+                    return result
+                current = await self.store.run(
+                    lambda: self.store.get_invocation(invocation_id)
+                )
+                if current.status is InvocationStatus.INTENT:
+                    await _settle(
+                        asyncio.create_task(self._mark_unknown(invocation_id))
+                    )
+                raise
+            except BaseException:
+                current = await _settle(
+                    asyncio.create_task(
+                        self.store.run(lambda: self.store.get_invocation(invocation_id))
+                    )
                 )
                 if current.status is InvocationStatus.INTENT:
                     await _settle(
