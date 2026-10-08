@@ -275,12 +275,6 @@ def test_restart_reconciles_queued_running_cancellation_and_unknown(tmp_path):
             ids.append((job_id, turn.id))
         store.request_job_cancel(ids[2][0])
         unknown_job = store.start_job(ids[3][0])
-        store.run_sync(
-            lambda: store._conn.execute(
-                "UPDATE jobs SET status='running', attempt=1 WHERE id=?",
-                (ids[1][0],),
-            )
-        )
         invocation = store.record_tool_proposal(
             ids[3][1],
             "call",
@@ -294,6 +288,14 @@ def test_restart_reconciles_queued_running_cancellation_and_unknown(tmp_path):
             unknown_job.attempt,
         )
         store.record_tool_intent(invocation.id, "m5-v1", "clock")
+        # Inject the crash snapshot after normal mutations; two running jobs
+        # are now rejected by the tool intent boundary.
+        store.run_sync(
+            lambda: store._conn.execute(
+                "UPDATE jobs SET status='running', attempt=1 WHERE id=?",
+                (ids[1][0],),
+            )
+        )
     with SqliteStore(tmp_path) as reopened:
         assert reopened.get_job(ids[0][0]).status is JobStatus.QUEUED
         assert reopened.get_job(ids[1][0]).status is JobStatus.INTERRUPTED
@@ -341,7 +343,15 @@ def test_restart_classifies_every_persisted_job_status(tmp_path):
             elif name == "failed":
                 store.fail_turn(turn.id, "backend_crashed", started.attempt)
             elif name == "cancel_requested":
-                store.request_job_cancel(job_id)
+                store.interrupt_turn(turn.id, expected_job_attempt=started.attempt)
+        # Inject the pending-cancellation crash state after the other jobs exist;
+        # live execution cannot overtake cancellation cleanup.
+        store.run_sync(
+            lambda: store._conn.execute(
+                "UPDATE jobs SET status='cancel_requested', cancel_requested=1 WHERE id=?",
+                (ids["cancel_requested"],),
+            )
+        )
     with SqliteStore(tmp_path) as reopened:
         expected = {
             "queued": JobStatus.QUEUED,

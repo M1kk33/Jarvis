@@ -7,6 +7,10 @@ from typing import Literal
 from jarvis.domain.types import Message
 
 
+def tool_argument_limit(name: str) -> int:
+    return 32768 if name == "create_text_file" else 4096
+
+
 class InvocationStatus(StrEnum):
     PROPOSED = "proposed"
     WAITING_APPROVAL = "waiting_approval"
@@ -36,6 +40,7 @@ class ToolInvocation:
     receipt_json: str | None
     job_id: str | None = None
     job_attempt: int | None = None
+    acknowledged_at: str | None = None
 
 
 @dataclass(frozen=True)

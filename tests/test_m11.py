@@ -84,6 +84,25 @@ def test_text_chunks_are_bounded_and_complete():
         split_speech("x" * 4097)
 
 
+def test_committed_legacy_reply_without_job_can_be_spoken(tmp_path):
+    with SqliteStore(tmp_path) as store:
+        service = ConversationService(store, FakeChatProvider())
+        spoken = SpokenPlaybackService(store, FakeSynthesizer(), Ram())
+        conversation = store.create_conversation("Legacy completed reply")
+
+        async def scenario():
+            result = await service.send_async(conversation.id, "hello", "legacy")
+            assert result.answer is not None
+            assert store.get_job_by_turn(result.turn.id) is None
+            session, count = await spoken.start(
+                conversation.id, result.turn.id, result.answer.id
+            )
+            assert count == 1
+            assert await spoken.chunk(session, 0) == _wav()
+
+        asyncio.run(scenario())
+
+
 def test_completed_reply_only_and_ordered_audio_queue(tmp_path):
     with SqliteStore(tmp_path) as store:
         fake = FakeSynthesizer()

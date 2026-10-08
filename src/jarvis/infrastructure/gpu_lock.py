@@ -33,7 +33,13 @@ class NamedGpuLock:
     def __init__(self, device_key: str, shared_root: Path | None = None) -> None:
         if not device_key or len(device_key) > 200:
             raise ValueError("A stable device key is required")
-        self._digest = hashlib.sha256(device_key.encode("utf-8")).hexdigest()[:32]
+        # Keep the established NVIDIA key and crash journal while merging aliases.
+        canonical_key = (
+            "GPU-" + device_key[4:].casefold()
+            if device_key[:4].casefold() == "gpu-"
+            else device_key
+        )
+        self._digest = hashlib.sha256(canonical_key.encode("utf-8")).hexdigest()[:32]
         self.name = f"Global\\JarvisGpu_{self._digest}"
         root = shared_root or Path(os.environ["LOCALAPPDATA"]) / "Jarvis" / "gpu_locks"
         self.root = root.expanduser().resolve()

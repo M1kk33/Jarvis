@@ -39,6 +39,7 @@ from jarvis.domain.types import (
     StreamDelta,
     StreamTerminal,
     StreamToolCall,
+    SubmissionConflict,
     Turn,
     TurnStatus,
 )
@@ -241,10 +242,13 @@ class ConversationService:
         turn: Turn | None = None
         created = False
         phase = "submission"
-        try:
-            active_turn, created = await self.store.run(
+        submission_task = asyncio.create_task(
+            self.store.run(
                 lambda: self.store.begin_turn(conversation_id, text, stable_id)
             )
+        )
+        try:
+            active_turn, created = await asyncio.shield(submission_task)
             turn = active_turn
             if not created:
                 answer = await self.store.run(
@@ -277,16 +281,28 @@ class ConversationService:
             return SendResult(settled, answer, duplicate=False)
         except asyncio.CancelledError:
             signal.set()
+            if phase == "submission":
+                _, created = await _settle(submission_task)
             prior = await self.store.run(
                 lambda: self.store.get_turn_by_submission(conversation_id, stable_id)
             )
             if prior is not None:
+                user, vision = await self.store.run(
+                    lambda: (
+                        self.store.get_user_message(prior.id),
+                        self.store.get_vision_input(prior.id),
+                    )
+                )
+                if user.text != text or vision is not None:
+                    raise SubmissionConflict(
+                        "Submission ID already has different input"
+                    )
                 if prior.status is TurnStatus.COMPLETE:
                     answer = await self.store.run(
                         lambda: self.store.get_answer(prior.id)
                     )
                     return SendResult(prior, answer, duplicate=not created)
-                if prior.status is TurnStatus.PENDING:
+                if prior.status is TurnStatus.PENDING and created:
                     await self.store.run(lambda: self.store.interrupt_turn(prior.id))
             self.diagnostics("turn_cancelled", {})
             raise RequestFailure("cancelled", "Chat request was cancelled") from None

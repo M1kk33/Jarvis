@@ -20,7 +20,7 @@ _user.SetForegroundWindow.argtypes = [ctypes.c_void_p]
 class DesktopInstance:
     def __init__(self, data_dir: Path) -> None:
         digest = hashlib.sha256(str(data_dir.resolve()).casefold().encode()).hexdigest()
-        self.title = f"Jarvis — управление ({digest[:8]})"
+        self.title = f"Jarvis · {digest[:8]}"
         self._handle = _kernel.CreateMutexW(
             None, False, f"Local\\JarvisDesktop_{digest}"
         )

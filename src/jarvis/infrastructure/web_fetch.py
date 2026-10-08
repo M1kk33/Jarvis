@@ -116,10 +116,13 @@ class _PinnedConnection:
             if ipaddress.ip_address(peer) != ipaddress.ip_address(self.pinned_address):
                 raise RequestFailure("invalid_request", "Connected destination changed")
             if isinstance(self, http.client.HTTPSConnection):
-                self.sock = self._context.wrap_socket(  # type: ignore[attr-defined]
+                tls_socket = self._context.wrap_socket(  # type: ignore[attr-defined]
                     self.sock,
                     server_hostname=self.host,  # type: ignore[attr-defined]
+                    do_handshake_on_connect=False,
                 )
+                self.sock = tls_socket
+                tls_socket.do_handshake()
         except BaseException:
             self.sock.close()
             raise
@@ -146,7 +149,9 @@ class PublicPageFetcher:
         _parse(url)
         return "GET " + url
 
-    def _resolve(self, host: str, port: int, deadline: float) -> list[str]:
+    def _resolve(
+        self, host: str, port: int, deadline: float, cancel: threading.Event
+    ) -> list[str]:
         if not _DNS_SLOTS.acquire(blocking=False):
             raise RequestFailure("unavailable", "DNS resolver is busy")
         results: queue.Queue[object] = queue.Queue(maxsize=1)
@@ -165,32 +170,49 @@ class PublicPageFetcher:
         except RuntimeError:
             _DNS_SLOTS.release()
             raise
-        try:
-            result = results.get(
-                timeout=min(3.0, max(0.0, deadline - time.monotonic()))
-            )
-        except queue.Empty as exc:
-            raise RequestFailure("timeout", "DNS resolution timed out") from exc
+        dns_deadline = min(deadline, time.monotonic() + 3.0)
+        while True:
+            if cancel.is_set():
+                raise RequestFailure("cancelled", "Page retrieval cancelled")
+            remaining = dns_deadline - time.monotonic()
+            if remaining <= 0:
+                raise RequestFailure("timeout", "DNS resolution timed out")
+            try:
+                result = results.get(timeout=min(remaining, 0.05))
+                break
+            except queue.Empty:
+                continue
         if isinstance(result, Exception):
             raise RequestFailure("unavailable", "DNS resolution failed") from result
         assert isinstance(result, list)
         return result
 
     def download(self, url: str) -> tuple[bytes, str, int]:
+        return self.download_cancellable(url, threading.Event())
+
+    def download_cancellable(
+        self, url: str, cancel: threading.Event
+    ) -> tuple[bytes, str, int]:
         parsed = _parse(url)
         host = parsed.hostname
         assert host is not None
         port = 443 if parsed.scheme == "https" else 80
         deadline = time.monotonic() + _DURATION
-        addresses = self._resolve(host, port, deadline)
+        addresses = self._resolve(host, port, deadline, cancel)
         if not addresses or any(not _public(address) for address in addresses):
             raise RequestFailure(
                 "invalid_request", "DNS did not resolve exclusively to public addresses"
             )
         address = addresses[0]
         remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise RequestFailure("timeout", "Fetch timed out")
+
+        def check_deadline() -> None:
+            if cancel.is_set():
+                raise RequestFailure("cancelled", "Page retrieval cancelled")
+            if time.monotonic() >= deadline:
+                raise RequestFailure("timeout", "Fetch timed out")
+
+        check_deadline()
         if self.connection_factory is not None:
             conn = self.connection_factory(
                 parsed.scheme, host, port, address, remaining
@@ -199,6 +221,26 @@ class PublicPageFetcher:
             cls = _HTTPS if parsed.scheme == "https" else _HTTP
             conn = cls(host, port, timeout=min(remaining, 3.0))
             conn.pinned_address = address
+        done = threading.Event()
+        sockets: list[socket.socket] = []
+
+        def interrupt() -> None:
+            while not done.wait(0.01):
+                current_socket = conn.sock
+                if current_socket is not None and current_socket not in sockets:
+                    sockets.append(current_socket)
+                if cancel.is_set() or time.monotonic() >= deadline:
+                    for active_socket in sockets:
+                        try:
+                            active_socket.shutdown(socket.SHUT_RDWR)
+                        except OSError:
+                            pass
+
+        watchdog = threading.Thread(
+            target=interrupt, name="jarvis-web-deadline", daemon=True
+        )
+        watchdog.start()
+        response = None
         try:
             target = (parsed.path or "/") + ("?" + parsed.query if "?" in url else "")
             conn.request(
@@ -212,7 +254,11 @@ class PublicPageFetcher:
                     "Connection": "close",
                 },
             )
+            if conn.sock is not None and conn.sock not in sockets:
+                sockets.append(conn.sock)
+            check_deadline()
             response = conn.getresponse()
+            check_deadline()
             if 300 <= response.status < 400:
                 raise RequestFailure(
                     "invalid_request", "Redirect needs a new approved URL"
@@ -248,6 +294,7 @@ class PublicPageFetcher:
                 if conn.sock is not None:
                     conn.sock.settimeout(min(remaining, 2.0))
                 chunk = response.read(min(8192, _COMPRESSED_LIMIT - compressed + 1))
+                check_deadline()
                 if not chunk:
                     break
                 compressed += len(chunk)
@@ -275,17 +322,28 @@ class PublicPageFetcher:
                 )
             return raw, content_type, response.status
         except TimeoutError as exc:
+            check_deadline()
             raise RequestFailure("timeout", "Page retrieval timed out") from exc
         except (OSError, ssl.SSLError, http.client.HTTPException, zlib.error) as exc:
+            check_deadline()
             raise RequestFailure("unavailable", "Page retrieval failed") from exc
         finally:
+            done.set()
+            watchdog.join()
+            if response is not None:
+                response.close()
             conn.close()
 
     def execute(self, name: str, arguments: dict[str, object]) -> dict[str, object]:
+        return self.execute_cancellable(name, arguments, threading.Event())
+
+    def execute_cancellable(
+        self, name: str, arguments: dict[str, object], cancel: threading.Event
+    ) -> dict[str, object]:
         self.inspect(name, arguments)
         url = arguments["url"]
         assert isinstance(url, str)
-        raw, content_type, status = self.download(url)
+        raw, content_type, status = self.download_cancellable(url, cancel)
         text = raw.decode("utf-8", errors="replace")
         if content_type == "text/html":
             parser = _Text()

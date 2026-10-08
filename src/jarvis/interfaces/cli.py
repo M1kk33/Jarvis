@@ -81,6 +81,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "reconcile-file", help="Verify an uncertain create-only file result"
     )
     reconcile.add_argument("invocation_id")
+    acknowledge = commands.add_parser(
+        "acknowledge-tool",
+        help="Acknowledge an uncertain action after cancelling its job; never retry it",
+    )
+    acknowledge.add_argument("invocation_id")
     commands.add_parser("backup", help="Create a verified data backup")
     restore = commands.add_parser("restore", help="Restore into --data-dir")
     restore.add_argument("backup_dir")
@@ -190,6 +195,11 @@ def dispatch(
                 print(
                     f"{hit.kind}:{hit.source_id}#{hit.location}\t{hit.path or 'user memory'}\n{hit.text}"
                 )
+    elif args.command == "acknowledge-tool":
+        invocation = service.store.acknowledge_unknown(args.invocation_id)
+        print(
+            f"{invocation.id}\t{invocation.status.value}\tacknowledged={invocation.acknowledged_at}"
+        )
     elif args.command == "create":
         print(service.create(args.title).id)
     elif args.command == "list":
@@ -214,6 +224,15 @@ def dispatch(
                     f"  tool {invocation.ordinal}: {invocation.name} "
                     f"[{invocation.status.value}]"
                 )
+                print(f"    id={invocation.id} target={invocation.target_identity}")
+                print(f"    arguments={invocation.arguments_json}")
+                print(
+                    f"    receipt={invocation.receipt_json} result={invocation.result_json}"
+                )
+                if invocation.acknowledged_at:
+                    print(
+                        f"    uncertain outcome acknowledged={invocation.acknowledged_at}"
+                    )
             draft = service.get_draft(turn.id)
             if draft is not None:
                 print(f"  draft [{draft.status}]: {draft.text}")

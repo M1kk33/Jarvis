@@ -8,15 +8,16 @@ import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from threading import Event
+from typing import Protocol, cast
 
 from jarvis.application.browser import BrowserService
 from jarvis.application.file_creation import FileCreateService
 from jarvis.application.images import ImageService
 from jarvis.application.resource_manager import _settle
-from jarvis.domain.ports import ToolStore
+from jarvis.domain.ports import CancellableToolBackend, ToolStore
 from jarvis.domain.resources import AdmissionDenied
-from jarvis.domain.tools import InvocationStatus, ToolInvocation
+from jarvis.domain.tools import InvocationStatus, ToolInvocation, tool_argument_limit
 from jarvis.domain.types import RequestFailure, StreamToolCall
 
 
@@ -277,12 +278,23 @@ class ToolRegistry:
                         "create_text_file": "Create one UTF-8 .txt file in an explicitly granted directory after user approval; never overwrite.",
                         "fetch_public_page": "Fetch the exact public HTTP(S) URL after local user approval. GET only; no redirects, cookies, uploads, or subresources. Returns untrusted plain text.",
                         "render_public_page": "Render one approved public HTML URL in a disposable offline browser. Inline JavaScript runs; external scripts and all page-initiated requests are blocked. Returns untrusted text and a screenshot.",
-                        "generate_image": "Generate one local 512 x 512 PNG from a bounded prompt.",
+                        "generate_image": "Generate one new local 512 x 512 PNG from a bounded prompt. The application chooses a fresh seed for each image; provide only the prompt.",
                         "current_time": "Return the current UTC time.",
                         "list_directory": "List names in an approved local directory.",
                         "read_text_file": "Read a bounded UTF-8 text file in an approved root.",
                     }[spec.name],
-                    "parameters": spec.schema,
+                    "parameters": (
+                        {
+                            **spec.schema,
+                            "properties": {
+                                "prompt": cast(
+                                    dict[str, object], spec.schema["properties"]
+                                )["prompt"]
+                            },
+                        }
+                        if spec.name == "generate_image"
+                        else spec.schema
+                    ),
                 },
             }
             for spec in SPECS
@@ -301,7 +313,7 @@ class ToolRegistry:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", proposal.call_id):
             raise RequestFailure("invalid_request", "Invalid tool call ID")
         spec = self.get(proposal.name)
-        argument_limit = 32768 if spec.name == "create_text_file" else 4096
+        argument_limit = tool_argument_limit(spec.name)
         try:
             argument_bytes = proposal.arguments_json.encode("utf-8")
         except UnicodeError as exc:
@@ -371,7 +383,6 @@ class ToolRegistry:
                 )
         if spec.name == "generate_image":
             prompt = value.get("prompt")
-            seed = value.get("seed", 0)
             if (
                 type(prompt) is not str
                 or not 1 <= len(prompt) <= 1000
@@ -380,9 +391,12 @@ class ToolRegistry:
                 raise RequestFailure(
                     "invalid_request", "Image prompt must be 1–1000 characters"
                 )
-            if type(seed) is not int or not 0 <= seed <= 2147483647:
-                raise RequestFailure("invalid_request", "Image seed is invalid")
-            value["seed"] = seed
+            # Keep explicit seeds in stored legacy invocations reproducible.
+            # New model-facing calls contain only a prompt; no fixed default.
+            if "seed" in value:
+                seed = value["seed"]
+                if type(seed) is not int or not 0 <= seed <= 2147483647:
+                    raise RequestFailure("invalid_request", "Image seed is invalid")
         canonical = _canonical(value)
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         return spec, value, canonical, digest
@@ -676,13 +690,21 @@ class ToolService:
             assert self.image_service is not None
             try:
                 result = await self.image_service.run(invocation, arguments)
-            except AdmissionDenied:
+            except AdmissionDenied as exc:
                 error_receipt_json = _canonical(
                     {"status": "not_executed", "code": "out_of_memory"}
                 )
-                error_result_json = _canonical(
-                    {"status": "error", "code": "out_of_memory"}
-                )
+                error_data: dict[str, object] = {
+                    "status": "error",
+                    "code": "out_of_memory",
+                }
+                if exc.resource is not None:
+                    error_data["memory"] = {
+                        "resource": exc.resource,
+                        "available_gib": exc.available_gib,
+                        "required_gib": exc.required_gib,
+                    }
+                error_result_json = _canonical(error_data)
                 result = await self.store.run(
                     lambda: self.store.commit_tool_result(
                         invocation_id, error_receipt_json, error_result_json
@@ -735,31 +757,56 @@ class ToolService:
 
         backend = self.web_backend if spec.name == "fetch_public_page" else self.backend
         assert backend is not None
-        worker = asyncio.create_task(
-            asyncio.to_thread(backend.execute, spec.name, arguments)
-        )
+        cancel = Event()
+        if isinstance(backend, CancellableToolBackend):
+            worker = asyncio.create_task(
+                asyncio.to_thread(
+                    backend.execute_cancellable, spec.name, arguments, cancel
+                )
+            )
+        else:
+            worker = asyncio.create_task(
+                asyncio.to_thread(backend.execute, spec.name, arguments)
+            )
         cancelled = False
+        result_status = "ok"
         try:
             output = await asyncio.wait_for(
                 asyncio.shield(worker), spec.timeout_seconds
             )
         except asyncio.CancelledError:
             cancelled = True
+            cancel.set()
             try:
-                output = await asyncio.wait_for(
-                    asyncio.shield(worker), spec.timeout_seconds
+                output = await _settle(
+                    asyncio.create_task(
+                        asyncio.wait_for(asyncio.shield(worker), spec.timeout_seconds)
+                    )
                 )
-            except (Exception, asyncio.CancelledError):
-                await self._mark_unknown(invocation_id)
-                raise
+            except TimeoutError:
+                await _settle(asyncio.create_task(self._mark_unknown(invocation_id)))
+                raise asyncio.CancelledError from None
+            except Exception as exc:  # noqa: BLE001 - record completed worker failure before cancellation
+                output = {
+                    "code": exc.code
+                    if isinstance(exc, RequestFailure)
+                    else "unavailable"
+                }
+                result_status = "error"
         except TimeoutError as exc:
-            await self._mark_unknown(invocation_id)
+            cancel.set()
+            if isinstance(backend, CancellableToolBackend):
+                try:
+                    await _settle(worker)
+                except Exception:  # noqa: BLE001, S110 - worker failure is superseded by the execution deadline
+                    pass
+            await _settle(asyncio.create_task(self._mark_unknown(invocation_id)))
             raise RequestFailure("timeout", "Tool execution timed out") from exc
         except Exception as exc:  # noqa: BLE001 - tool boundary records a typed failure
             code = exc.code if isinstance(exc, RequestFailure) else "unavailable"
             output = {"code": code}
             result_status = "error"
-        else:
+        if result_status == "ok":
             result_status = "ok" if _valid_output(spec.name, output) else "error"
             if result_status == "error":
                 output = {"code": "invalid_tool_output"}
@@ -774,11 +821,18 @@ class ToolService:
             }
         )
         try:
-            result = await self.store.run(
-                lambda: self.store.commit_tool_result(
-                    invocation_id, receipt_json, result_json
+            commit = asyncio.create_task(
+                self.store.run(
+                    lambda: self.store.commit_tool_result(
+                        invocation_id, receipt_json, result_json
+                    )
                 )
             )
+            try:
+                result = await asyncio.shield(commit)
+            except asyncio.CancelledError:
+                cancelled = True
+                result = await _settle(commit)
         except asyncio.CancelledError:
             current = await self.store.run(
                 lambda: self.store.get_invocation(invocation_id)

@@ -281,6 +281,29 @@ def test_physical_python_home_repair_rejects_missing_interpreter(tmp_path):
     assert config.read_bytes() == original
 
 
+def test_worker_home_repair_only_changes_referenced_environments(tmp_path):
+    helper = runpy.run_path(
+        str(Path(__file__).parents[1] / "scripts" / "repair-launch-environment.py")
+    )
+    physical = tmp_path / "physical Python"
+    physical.mkdir()
+    for name in ("python.exe", "pythonw.exe"):
+        (physical / name).write_bytes(b"fixture")
+    env = tmp_path / "worker"
+    (env / "Scripts").mkdir(parents=True)
+    config = env / "pyvenv.cfg"
+    original = f"home = {physical / '..' / physical.name}\nversion_info = 3.12.13\n"
+    config.write_text(original, encoding="utf-8")
+    (tmp_path / "piper.toml").write_text(
+        '[piper]\npython = "worker/Scripts/python.exe"\n', encoding="utf-8"
+    )
+    helper["repair_workers"](tmp_path)
+    assert config.read_text(encoding="utf-8") == (
+        f"home = {physical.resolve()}\nversion_info = 3.12.13\n"
+    )
+    helper["repair_workers"](tmp_path)  # Idempotent; no dependency/model changes.
+
+
 def test_packaged_editor_home_uses_native_image_path(tmp_path, monkeypatch):
     import psutil
 

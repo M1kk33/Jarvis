@@ -1,8 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>Jarvis</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/voice_player.js" defer></script>
@@ -11,49 +12,57 @@
 <body>
   <div class="layout">
     <aside class="sidebar">
-      <div class="brand">Jarvis</div>
-      <button id="new-conversation" type="button">New conversation</button>
-      <h2>Conversations</h2>
-      <nav id="conversations" aria-label="Conversations"></nav>
+      <div class="brand"><span class="brand-mark" aria-hidden="true">J</span> Jarvis <span class="edition">LOCAL</span></div>
+      <button id="new-conversation" class="new-chat" type="button"><span aria-hidden="true">＋</span> Новый диалог</button>
+      <h2>Ваши диалоги</h2>
+      <nav id="conversations" aria-label="Диалоги"></nav>
+      <div class="sidebar-footer"><span class="status-dot"></span><div>На вашем компьютере<small>История хранится локально</small></div></div>
     </aside>
     <main class="chat">
       <header>
-        <div>
-          <p class="eyebrow">Private · on this computer</p>
-          <h1 id="conversation-title">Select a conversation</h1>
-        </div>
+        <div class="heading"><p class="eyebrow">Личный помощник</p><h1 id="conversation-title">Новый диалог</h1></div>
         <div class="header-actions">
-          <span id="voice-status" role="status"></span>
-          <button id="stop-voice" type="button" class="quiet" hidden>Stop voice</button>
-          <button id="refresh" type="button" class="quiet">Refresh</button>
+          <button id="stop-voice" type="button" class="quiet" hidden>Остановить голос</button>
+          <button id="refresh" type="button" class="icon-button" title="Обновить" aria-label="Обновить">↻</button>
+          <button id="toggle-activity" type="button" class="quiet" aria-expanded="false" aria-controls="activity-panel">Действия <span id="approval-count" class="count" hidden>0</span></button>
         </div>
       </header>
+      <div class="voice-line"><span id="voice-status" role="status"></span></div>
       <div id="messages" class="messages" aria-live="polite"></div>
       <pre id="draft" class="draft" aria-live="polite"></pre>
-      <form id="send-form" class="composer">
-        <label for="message-input">Your message</label>
-        <textarea id="message-input" rows="3" maxlength="65536" required></textarea>
-        <div id="speech-controls" class="speech-controls" hidden>
-          <button id="record-button" type="button" class="quiet">Record</button>
-          <button id="stop-recording" type="button" hidden>Stop recording</button>
-          <button id="cancel-transcription" type="button" class="quiet" hidden>Cancel transcription</button>
-          <span id="speech-status" role="status"></span>
-        </div>
-        <div id="vision-controls" class="vision-controls" hidden>
-          <label for="screenshot-input">Screenshot (optional PNG, max 2 MiB and 1024 × 1024; question max 1,024 characters)</label>
-          <input id="screenshot-input" type="file" accept="image/png">
-          <img id="screenshot-preview" alt="Selected screenshot preview" hidden>
-          <span class="subtle">When sent, the screenshot is saved with this conversation and included in Jarvis backups. Jarvis has no screenshot deletion control yet.</span>
-        </div>
-        <button id="send-button" type="submit">Send</button>
-      </form>
-      <p id="notice" class="notice" role="status"></p>
+      <div class="composer-wrap">
+        <form id="send-form" class="composer">
+          <label for="message-input" class="sr-only">Сообщение</label>
+          <textarea id="message-input" rows="3" maxlength="65536" placeholder="О чём поговорим?" required></textarea>
+          <div class="composer-tools">
+            <div id="speech-controls" class="speech-controls" hidden>
+              <button id="record-button" type="button" class="quiet">◉ Голос</button>
+              <button id="stop-recording" type="button" hidden>Завершить запись</button>
+              <button id="cancel-transcription" type="button" class="quiet" hidden>Отменить</button>
+              <span id="speech-status" role="status"></span>
+            </div>
+            <span class="send-hint">Enter — отправить · Shift + Enter — строка</span>
+            <button id="send-button" type="submit">Отправить <span aria-hidden="true">↑</span></button>
+          </div>
+          <details id="vision-controls" class="vision-controls" hidden>
+            <summary>＋ Скриншот · Ctrl + V или перетащите сюда</summary>
+            <label for="screenshot-input">PNG, JPEG или WebP до 20 МиБ · автоматически уменьшим до 1024 × 1024 и 2 МиБ · вопрос до 1 024 символов</label>
+            <input id="screenshot-input" type="file" accept="image/png,image/jpeg,image/webp">
+            <img id="screenshot-preview" alt="Выбранный скриншот" hidden>
+            <span id="screenshot-status" role="status"></span>
+            <button id="remove-screenshot" class="quiet" type="button" hidden>Убрать скриншот</button>
+            <span class="subtle">Скриншот сохранится в диалоге и резервных копиях. Удаление скриншотов пока не предусмотрено.</span>
+          </details>
+        </form>
+        <p id="notice" class="notice" role="status"></p>
+        <p class="composer-caption">Jarvis может ошибаться. Проверяйте важные ответы.</p>
+      </div>
     </main>
-    <aside class="activity">
-      <h2>Activity</h2>
-      <div id="jobs"></div>
-      <h2>Approvals</h2>
-      <div id="approvals"></div>
+    <aside id="activity-panel" class="activity" hidden>
+      <div class="activity-heading"><h2>Действия</h2><button id="close-activity" type="button" class="icon-button" aria-label="Закрыть панель действий">×</button></div>
+      <p class="panel-caption">Ход работы и ваш контроль</p>
+      <h3>Требуют внимания</h3><div id="approvals"></div>
+      <h3>Ход работы</h3><div id="jobs"></div>
     </aside>
   </div>
 </body>

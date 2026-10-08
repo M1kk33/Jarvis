@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from jarvis.domain.resources import RuntimeProfile
+from jarvis.domain.resources import RuntimeProfile, canonical_gpu_uuid
 
 
 class LocalImageProfile(BaseModel):
@@ -34,9 +34,7 @@ class LocalImageProfile(BaseModel):
     @field_validator("device_uuid")
     @classmethod
     def valid_uuid(cls, value: str) -> str:
-        if not value.startswith("GPU-") or len(value) > 80:
-            raise ValueError("Expected NVIDIA GPU UUID")
-        return value
+        return canonical_gpu_uuid(value)
 
     @classmethod
     def from_file(cls, path: Path, data_dir: Path) -> "LocalImageProfile":

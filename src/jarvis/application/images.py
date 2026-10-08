@@ -139,7 +139,17 @@ class ImageService:
             await self.store.run(
                 lambda: self.store.set_image_progress(invocation.id, "image_generating")
             )
-            seed = arguments["seed"]
+            # The committed random invocation identity selects one stable
+            # variation. Re-reading/retrying it never selects another seed.
+            seed = arguments.get("seed")
+            if seed is None:
+                seed = (
+                    int.from_bytes(
+                        hashlib.sha256(invocation.id.encode("utf-8")).digest()[:4],
+                        "big",
+                    )
+                    & 0x7FFFFFFF
+                )
             assert type(seed) is int
             source = await self.provider.generate(
                 str(arguments["prompt"]), seed, invocation.id, signal
@@ -167,13 +177,19 @@ class ImageService:
                         "format": "png",
                         "width": 512,
                         "height": 512,
+                        "seed": seed,
                     },
                 },
                 sort_keys=True,
                 separators=(",", ":"),
             )
             receipt_json = json.dumps(
-                {"status": "complete", "artifact_id": artifact_id, "sha256": digest},
+                {
+                    "status": "complete",
+                    "artifact_id": artifact_id,
+                    "sha256": digest,
+                    "seed": seed,
+                },
                 sort_keys=True,
                 separators=(",", ":"),
             )

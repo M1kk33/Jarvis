@@ -412,14 +412,19 @@ def test_named_device_lock_serializes_separate_processes(tmp_path):
         if owner.poll() is None:
             owner.terminate()
             owner.wait(timeout=3)
+        if owner.stderr is not None:
+            owner.stderr.close()
 
 
 def test_cold_and_warm_admission_boundaries_and_missing_telemetry():
     assert not admit(TEXT, ResourceSnapshot(5, 8), warm=False).degraded_gpu_telemetry
     with pytest.raises(AdmissionDenied):
         admit(TEXT, ResourceSnapshot(4.99, 8), warm=False)
-    with pytest.raises(AdmissionDenied):
+    with pytest.raises(AdmissionDenied) as denied:
         admit(TEXT, ResourceSnapshot(5, 7.99), warm=False)
+    assert denied.value.resource == "ram"
+    assert denied.value.available_gib == 7.99
+    assert denied.value.required_gib == 8
     assert not admit(TEXT, ResourceSnapshot(1.5, 4), warm=True).degraded_gpu_telemetry
     assert admit(TEXT, ResourceSnapshot(None, 8), warm=False).degraded_gpu_telemetry
     with pytest.raises(AdmissionDenied):
@@ -428,8 +433,9 @@ def test_cold_and_warm_admission_boundaries_and_missing_telemetry():
             ResourceSnapshot(None, 8),
             warm=False,
         )
-    with pytest.raises(AdmissionDenied):
+    with pytest.raises(AdmissionDenied) as denied:
         admit(TEXT, ResourceSnapshot(8, None), warm=False)
+    assert denied.value.available_gib is None
     with pytest.raises(ValueError):
         RuntimeProfile("too-large", 6.1, 5, 0.5, 1)
     with pytest.raises(ValueError):

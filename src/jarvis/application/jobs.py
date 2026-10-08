@@ -3,16 +3,18 @@
 import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from threading import Event
 from uuid import uuid4
 
 from jarvis.application.conversations import ConversationService, _error_code
+from jarvis.application.resource_manager import _settle
 from jarvis.application.vision import (
     MAX_QUESTION_CHARS,
     VisionService,
     validate_screenshot,
 )
-from jarvis.domain.jobs import TERMINAL_JOBS, Job, JobStatus
+from jarvis.domain.jobs import TERMINAL_JOBS, Job, JobStatus, same_profile_identity
 from jarvis.domain.ports import JobStore
 from jarvis.domain.resources import ResourceUnavailable
 from jarvis.domain.types import (
@@ -42,6 +44,7 @@ class JobRunner:
         self._active: dict[str, tuple[Event, asyncio.Task[Job]]] = {}
         self._background: set[asyncio.Task[Job]] = set()
         self._launched: dict[str, asyncio.Task[Job]] = {}
+        self._approved_launches: set[str] = set()
         self._diagnostics = conversations.diagnostics
 
     async def submit(
@@ -64,6 +67,14 @@ class JobRunner:
             )
             if prior is None:
                 raise
+            user, vision = await self.store.run(
+                lambda: (
+                    self.store.get_user_message(prior.id),
+                    self.store.get_vision_input(prior.id),
+                )
+            )
+            if user.text != text or vision is not None:
+                raise SubmissionConflict("Submission ID already has different input")
             turn = prior
             created = False
         job = await self.store.run(lambda: self.store.get_job_by_turn(turn.id))
@@ -113,7 +124,9 @@ class JobRunner:
                 user.text != question
                 or source is None
                 or source.sha256 != digest
-                or source.profile_name != vision_service.profile_identity
+                or not same_profile_identity(
+                    source.profile_name, vision_service.profile_identity
+                )
             ):
                 raise SubmissionConflict("Submission ID already has different input")
             if existing_job is None:
@@ -150,7 +163,9 @@ class JobRunner:
                 stored is None
                 or user.text != question
                 or stored.sha256 != attachment.sha256
-                or stored.profile_name != attachment.profile_name
+                or not same_profile_identity(
+                    stored.profile_name, attachment.profile_name
+                )
             ):
                 raise SubmissionConflict(
                     "Screenshot submission outcome differs"
@@ -165,11 +180,24 @@ class JobRunner:
         self,
         job_id: str,
         on_delta: Callable[[str], Awaitable[None]] | None = None,
+        approved: tuple[str, str] | None = None,
     ) -> asyncio.Task[Job]:
         existing = self._launched.get(job_id)
-        if existing is not None and not existing.done():
+        if (
+            existing is not None
+            and not existing.done()
+            and (approved is None or job_id in self._approved_launches)
+        ):
             return existing
-        task = asyncio.create_task(self.run_job(job_id, on_delta))
+
+        async def dispatch() -> Job:
+            if existing is not None and not existing.done():
+                await asyncio.shield(existing)
+            return await self.run_job(job_id, on_delta, approved)
+
+        task = asyncio.create_task(dispatch())
+        if approved is not None:
+            self._approved_launches.add(job_id)
         self._background.add(task)
         self._launched[job_id] = task
 
@@ -177,6 +205,7 @@ class JobRunner:
             self._background.discard(completed)
             if self._launched.get(job_id) is completed:
                 self._launched.pop(job_id, None)
+                self._approved_launches.discard(job_id)
             if not completed.cancelled():
                 completed.exception()
 
@@ -187,16 +216,23 @@ class JobRunner:
         if self._background:
             await asyncio.gather(*self._background, return_exceptions=True)
 
+    async def shutdown(self) -> None:
+        """Cancel dispatched work and wait for its receipts and cleanup to settle."""
+        for job_id in tuple(self._launched):
+            await self.cancel(job_id)
+        await self.wait_for_idle()
+
     async def run_job(
         self,
         job_id: str,
         on_delta: Callable[[str], Awaitable[None]] | None = None,
+        approved: tuple[str, str] | None = None,
     ) -> Job:
         try:
             async with self._execution:
-                return await self._run_locked(job_id, on_delta)
+                return await self._run_locked(job_id, on_delta, approved)
         except asyncio.CancelledError:
-            return await self._settle_cancellation(job_id)
+            return await _settle(asyncio.create_task(self._settle_cancellation(job_id)))
 
     async def _settle_cancellation(self, job_id: str) -> Job:
         job = await self.store.run(lambda: self.store.get_job(job_id))
@@ -210,11 +246,13 @@ class JobRunner:
             if (
                 manager is None
                 or profile is None
-                or job.profile_name
-                not in {
-                    self.profile_identity,
-                    self.vision.profile_identity if self.vision is not None else "",
-                }
+                or not any(
+                    same_profile_identity(job.profile_name, identity)
+                    for identity in (
+                        self.profile_identity,
+                        self.vision.profile_identity if self.vision is not None else "",
+                    )
+                )
                 or not await manager.verify_previous_worker()
             ):
                 raise ResourceUnavailable("Previous model-worker cleanup is unverified")
@@ -226,6 +264,7 @@ class JobRunner:
         self,
         job_id: str,
         on_delta: Callable[[str], Awaitable[None]] | None,
+        approved: tuple[str, str] | None = None,
     ) -> Job:
         job = await self.store.run(lambda: self.store.get_job(job_id))
         if job.status in TERMINAL_JOBS:
@@ -239,7 +278,9 @@ class JobRunner:
             if is_vision and self.vision is not None
             else self.profile_identity
         )
-        if job.profile_name != expected_profile or (is_vision and self.vision is None):
+        if not same_profile_identity(job.profile_name, expected_profile) or (
+            is_vision and self.vision is None
+        ):
             raise RequestFailure(
                 "unsupported_capability", "Job requires its original model profile"
             )
@@ -250,7 +291,26 @@ class JobRunner:
         try:
             if job.cancel_requested:
                 return await self._settle_cancellation(job_id)
-            if job.status is JobStatus.RUNNING:
+            if approved is not None:
+                tools = self.conversations.tool_service
+                if tools is None:
+                    raise RequestFailure("invalid_request", "Tools are not configured")
+                invocation_id, approval_id = approved
+                invocation = await tools.store.run(
+                    lambda: tools.store.get_invocation(invocation_id)
+                )
+                if invocation.job_id != job_id or invocation.job_attempt != job.attempt:
+                    raise RequestFailure(
+                        "invalid_request", "Approval belongs to another attempt"
+                    )
+                job = await self.store.run(
+                    lambda: self.store.continue_approved_job(job_id, job.attempt)
+                )
+                remaining = self._remaining(job)
+                await asyncio.wait_for(
+                    tools.execute(invocation_id, approval_id), remaining
+                )
+            elif job.status is JobStatus.RUNNING:
                 invocations = await self.conversations.store.run(
                     lambda: self.conversations.store.get_invocations(job.turn_id)
                 )
@@ -268,20 +328,21 @@ class JobRunner:
             if signal.is_set() or latest.cancel_requested:
                 return await self._settle_cancellation(job_id)
             answer: str | None
+            remaining = self._remaining(job)
             if is_vision:
                 assert self.vision is not None and vision_input is not None
                 answer = await asyncio.wait_for(
                     self.vision.generate(
                         job.turn_id, vision_input, signal, on_delta, job.attempt
                     ),
-                    timeout=600,
+                    timeout=remaining,
                 )
             else:
                 answer = await asyncio.wait_for(
                     self.conversations.generate_existing_turn_async(
                         job.turn_id, job.conversation_id, signal, on_delta, job.attempt
                     ),
-                    timeout=600,
+                    timeout=remaining,
                 )
             if signal.is_set():
                 return await self._settle_cancellation(job_id)
@@ -299,7 +360,7 @@ class JobRunner:
             return completed
         except asyncio.CancelledError:
             signal.set()
-            return await self._settle_cancellation(job_id)
+            return await _settle(asyncio.create_task(self._settle_cancellation(job_id)))
         except Exception as exc:
             settled = await self.store.run(lambda: self.store.get_job(job_id))
             if settled.status in TERMINAL_JOBS:
@@ -319,6 +380,15 @@ class JobRunner:
         finally:
             self._active.pop(job_id, None)
 
+    @staticmethod
+    def _remaining(job: Job) -> float:
+        remaining = (
+            datetime.fromisoformat(job.deadline_at) - datetime.now(UTC)
+        ).total_seconds()
+        if remaining <= 0:
+            raise RequestFailure("timeout", "Job execution deadline expired")
+        return remaining
+
     async def cancel(self, job_id: str) -> Job:
         job = await self.store.run(lambda: self.store.request_job_cancel(job_id))
         if job.status is JobStatus.CANCEL_REQUESTED:
@@ -326,8 +396,9 @@ class JobRunner:
         active = self._active.get(job_id)
         if active is not None:
             signal, task = active
-            signal.set()
-            task.cancel()
+            if not signal.is_set():
+                signal.set()
+                task.cancel()
             return job
         if job.status is JobStatus.CANCEL_REQUESTED:
             return await self._settle_cancellation(job_id)

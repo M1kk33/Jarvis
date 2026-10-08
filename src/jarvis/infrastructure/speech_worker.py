@@ -86,6 +86,17 @@ def run() -> dict[str, object]:
     return {"version": 1, "text": text}
 
 
+def emit_result(result: dict[str, object]) -> None:
+    raw = (
+        json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        + b"\n"
+    )
+    if len(raw) > 65_536:
+        raw = b'{"version":1,"error":"transcript_limit"}\n'
+    sys.stdout.buffer.write(raw)
+    sys.stdout.buffer.flush()
+
+
 if __name__ == "__main__":
     try:
         result = run()
@@ -104,4 +115,4 @@ if __name__ == "__main__":
         }
     except Exception:  # noqa: BLE001 - process boundary, no audio/content in diagnostics
         result = {"version": 1, "error": "worker_failure"}
-    print(json.dumps(result, ensure_ascii=False, separators=(",", ":")), flush=True)
+    emit_result(result)

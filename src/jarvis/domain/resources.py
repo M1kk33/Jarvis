@@ -3,7 +3,18 @@
 from dataclasses import dataclass
 from enum import StrEnum
 from math import isfinite
-from re import fullmatch
+from re import IGNORECASE, fullmatch
+
+
+def canonical_gpu_uuid(value: str) -> str:
+    if (
+        fullmatch(
+            r"GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value, flags=IGNORECASE
+        )
+        is None
+    ):
+        raise ValueError("Expected a full NVIDIA GPU UUID")
+    return "GPU-" + value[4:].lower()
 
 
 class ResourceState(StrEnum):
@@ -21,7 +32,18 @@ class ResourceError(Exception):
 
 
 class AdmissionDenied(ResourceError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        resource: str | None = None,
+        available_gib: float | None = None,
+        required_gib: float | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.resource = resource
+        self.available_gib = available_gib
+        self.required_gib = required_gib
 
 
 class ResourceUnavailable(ResourceError):
@@ -88,19 +110,37 @@ def admit(
     if snapshot.available_ram_gib is not None and not isfinite(
         snapshot.available_ram_gib
     ):
-        raise AdmissionDenied("Available RAM telemetry is invalid")
+        raise AdmissionDenied(
+            "Available RAM telemetry is invalid", resource="ram", required_gib=ram + 3
+        )
     if snapshot.available_vram_gib is not None and not isfinite(
         snapshot.available_vram_gib
     ):
-        raise AdmissionDenied("Available VRAM telemetry is invalid")
+        raise AdmissionDenied(
+            "Available VRAM telemetry is invalid",
+            resource="vram",
+            required_gib=vram + 1,
+        )
     if snapshot.available_ram_gib is None or snapshot.available_ram_gib - ram < 3:
-        raise AdmissionDenied("Available RAM cannot preserve the 3 GiB reserve")
+        raise AdmissionDenied(
+            "Available RAM cannot preserve the 3 GiB reserve",
+            resource="ram",
+            available_gib=snapshot.available_ram_gib,
+            required_gib=ram + 3,
+        )
     if snapshot.available_vram_gib is None:
         if not profile.calibrated:
             raise AdmissionDenied(
-                "GPU telemetry is unavailable for an uncalibrated profile"
+                "GPU telemetry is unavailable for an uncalibrated profile",
+                resource="vram",
+                required_gib=vram + 1,
             )
         return Admission(degraded_gpu_telemetry=True)
     if snapshot.available_vram_gib - vram < 1:
-        raise AdmissionDenied("Available VRAM cannot preserve the 1 GiB reserve")
+        raise AdmissionDenied(
+            "Available VRAM cannot preserve the 1 GiB reserve",
+            resource="vram",
+            available_gib=snapshot.available_vram_gib,
+            required_gib=vram + 1,
+        )
     return Admission(degraded_gpu_telemetry=False)

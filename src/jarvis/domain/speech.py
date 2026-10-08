@@ -17,6 +17,10 @@ class SpeechUnavailable(SpeechError):
     pass
 
 
+class WorkerCleanupUnverified(SpeechUnavailable):
+    """CPU worker ownership must remain unavailable until process exit is verified."""
+
+
 class SpeechInvalid(SpeechError):
     pass
 

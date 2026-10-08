@@ -49,6 +49,9 @@ class Response:
     def read(self, amount):
         return self.body.read(amount)
 
+    def close(self):
+        self.body.close()
+
 
 class Connection:
     def __init__(self, response):
@@ -175,6 +178,9 @@ def test_mixed_dns_and_rebinding_are_denied(monkeypatch):
 
 def test_pinned_https_retains_original_hostname_for_tls(monkeypatch):
     class Socket:
+        def do_handshake(self):
+            pass
+
         def getpeername(self):
             return ("93.184.215.14", 443)
 
@@ -182,8 +188,9 @@ def test_pinned_https_retains_original_hostname_for_tls(monkeypatch):
             pass
 
     class Context:
-        def wrap_socket(self, sock, *, server_hostname):
+        def wrap_socket(self, sock, *, server_hostname, do_handshake_on_connect):
             assert server_hostname == "example.com"
+            assert do_handshake_on_connect is False
             return sock
 
     monkeypatch.setattr(socket, "create_connection", lambda *_args: Socket())

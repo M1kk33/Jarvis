@@ -6,7 +6,7 @@ import time
 
 import psutil
 
-from jarvis.domain.resources import ResourceSnapshot
+from jarvis.domain.resources import ResourceSnapshot, ResourceUnavailable
 
 
 class SystemClock:
@@ -39,10 +39,15 @@ class NvidiaResourceProbe:
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
             rows = result.stdout.splitlines()
-            if self.device_index < len(rows):
-                uuid, separator, free = rows[self.device_index].partition(",")
-                if separator and uuid.strip() == self.device_uuid:
-                    available_vram = int(free.strip()) / 1024
+            if not 0 <= self.device_index < len(rows):
+                raise ResourceUnavailable("Configured GPU index is absent")
+            uuid, separator, free = rows[self.device_index].partition(",")
+            if uuid.strip().casefold() != self.device_uuid.casefold():
+                raise ResourceUnavailable(
+                    "Configured GPU UUID does not match its index"
+                )
+            if separator:
+                available_vram = int(free.strip()) / 1024
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
         return ResourceSnapshot(available_vram, available_ram)

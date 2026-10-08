@@ -16,7 +16,11 @@ from jarvis.application.conversations import ConversationService
 from jarvis.application.file_creation import FileCreateService
 from jarvis.application.images import ImageService
 from jarvis.application.jobs import JobRunner
-from jarvis.application.resource_manager import ResourceManager, RuntimeRouter
+from jarvis.application.resource_manager import (
+    CpuWorkerGate,
+    ResourceManager,
+    RuntimeRouter,
+)
 from jarvis.application.retrieval import RetrievalService
 from jarvis.application.speech import SpeechService
 from jarvis.application.spoken import SpokenPlaybackService
@@ -392,7 +396,7 @@ def main(
 
                     from jarvis.interfaces.web import create_web_app
 
-                    cpu_gate = asyncio.Lock()
+                    cpu_gate = CpuWorkerGate()
                     speech = None
                     if args.speech_profile:
                         speech_profile = SpeechProfile.from_file(
@@ -460,7 +464,7 @@ def main(
                                 await spoken.stop()
                             if speech is not None:
                                 await speech.cancel()
-                            await runner.wait_for_idle()
+                            await runner.shutdown()
                             if manager is not None:
                                 await manager.close()
 
@@ -492,6 +496,7 @@ def desktop_main(argv: list[str]) -> int:
     from tkinter import messagebox
 
     from jarvis.infrastructure.desktop_instance import DesktopInstance
+    from jarvis.infrastructure.desktop_window import DesktopWindow
     from jarvis.interfaces.desktop import run_desktop
 
     args = parse_args(argv)
@@ -506,7 +511,9 @@ def desktop_main(argv: list[str]) -> int:
                 )
             return 0
         return run_desktop(
-            lambda control: main(argv, web_control=control), instance.title
+            lambda control: main(argv, web_control=control),
+            instance.title,
+            DesktopWindow(instance.title),
         )
     finally:
         instance.close()

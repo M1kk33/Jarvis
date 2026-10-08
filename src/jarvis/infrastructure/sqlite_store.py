@@ -16,7 +16,14 @@ from pathlib import Path
 from typing import Self, TypeVar
 from uuid import uuid4
 
-from jarvis.domain.jobs import TERMINAL_JOBS, Job, JobStatus, JobStep
+from jarvis.domain.jobs import (
+    JOB_EXECUTION_SECONDS,
+    TERMINAL_JOBS,
+    Job,
+    JobStatus,
+    JobStep,
+    same_profile_identity,
+)
 from jarvis.domain.retrieval import Document, Memory, RetrievalHit, RetrievalRoot
 from jarvis.domain.tools import (
     Approval,
@@ -236,6 +243,7 @@ class SqliteStore:
             (5, "005_images.sql"),
             (6, "006_vision.sql"),
             (7, "007_retrieval.sql"),
+            (8, "008_tool_acknowledgements.sql"),
         ):
             script = (
                 resources.files("jarvis")
@@ -266,8 +274,13 @@ class SqliteStore:
     async def run(self, operation: Callable[[], T]) -> T:
         """Serialize database work; cancellation does not cancel its commit."""
         future = self._worker.submit(operation)
+        wrapped = asyncio.wrap_future(future)
+        # A cancelled await leaves the owner operation running; consume its exception.
+        wrapped.add_done_callback(
+            lambda settled: settled.exception() if not settled.cancelled() else None
+        )
         try:
-            return await asyncio.shield(asyncio.wrap_future(future))
+            return await asyncio.shield(wrapped)
         except sqlite3.Error as exc:
             raise StorageFailure(
                 "SQLite operation failed; inspect the saved turn before retrying"
@@ -503,6 +516,7 @@ class SqliteStore:
             row["receipt_json"],
             row["job_id"],
             row["job_attempt"],
+            row["acknowledged_at"],
         )
 
     @_on_owner
@@ -512,6 +526,34 @@ class SqliteStore:
             (turn_id,),
         ).fetchall()
         return [self._invocation(row) for row in rows]
+
+    @_on_owner
+    def list_unknown_invocations(self) -> list[ToolInvocation]:
+        rows = self._conn.execute(
+            "SELECT * FROM tool_invocations WHERE status='outcome_unknown' "
+            "AND acknowledged_at IS NULL ORDER BY created_at, id"
+        ).fetchall()
+        return [self._invocation(row) for row in rows]
+
+    @_on_owner
+    def acknowledge_unknown(self, invocation_id: str) -> ToolInvocation:
+        """Trusted user acknowledgment frees new turns; it never resolves or replays a tool."""
+        with self._transaction():
+            invocation = self.get_invocation(invocation_id)
+            if invocation.status is not InvocationStatus.OUTCOME_UNKNOWN:
+                raise StaleTurnError("Tool outcome is not uncertain")
+            if invocation.job_id is not None:
+                if self.get_job(invocation.job_id).status not in TERMINAL_JOBS:
+                    raise StaleTurnError(
+                        "Cancel the unresolved job before acknowledging its outcome"
+                    )
+            elif self.get_turn(invocation.turn_id).status is TurnStatus.PENDING:
+                raise StaleTurnError("Turn is still active")
+            self._conn.execute(
+                "UPDATE tool_invocations SET acknowledged_at=COALESCE(acknowledged_at, ?) WHERE id=?",
+                (_now(), invocation_id),
+            )
+        return self.get_invocation(invocation_id)
 
     @_on_owner
     def get_invocation_by_call(
@@ -554,7 +596,11 @@ class SqliteStore:
                     )
                 )
                 content = invocation.result_json or json.dumps(
-                    {"status": invocation.status.value}, separators=(",", ":")
+                    {
+                        "status": invocation.status.value,
+                        "acknowledged_at": invocation.acknowledged_at,
+                    },
+                    separators=(",", ":"),
                 )
                 result.append(
                     ToolContextRecord(
@@ -811,6 +857,15 @@ class SqliteStore:
                     or job["attempt"] != row["job_attempt"]
                 ):
                     raise StaleTurnError("Tool job cannot execute")
+                if (
+                    self._conn.execute(
+                        "SELECT 1 FROM jobs WHERE (status='running' OR (status='cancel_requested' AND attempt>0)) "
+                        "AND id<>? LIMIT 1",
+                        (row["job_id"],),
+                    ).fetchone()
+                    is not None
+                ):
+                    raise StaleTurnError("Another job is executing")
             if (
                 row["policy_version"] != policy_version
                 or row["target_identity"] != target_identity
@@ -1247,6 +1302,39 @@ class SqliteStore:
             self._conn.backup(snapshot)
 
     @_on_owner
+    def continue_approved_job(self, job_id: str, expected_attempt: int) -> Job:
+        """Resume an approved step without resetting its attempt or proposal."""
+        with self._transaction():
+            job = self.get_job(job_id)
+            if (
+                job.status is not JobStatus.WAITING_APPROVAL
+                or job.attempt != expected_attempt
+                or job.cancel_requested
+            ):
+                raise StaleTurnError("Approval belongs to an inactive job")
+            if (
+                self._conn.execute(
+                    "SELECT 1 FROM jobs WHERE (status='running' OR (status='cancel_requested' AND attempt>0)) "
+                    "AND id<>? LIMIT 1",
+                    (job_id,),
+                ).fetchone()
+                is not None
+            ):
+                raise StaleTurnError("Another job is executing")
+            self._conn.execute(
+                "UPDATE jobs SET status='running', progress='approved', deadline_at=?, "
+                "updated_at=? WHERE id=?",
+                (
+                    (
+                        datetime.now(UTC) + timedelta(seconds=JOB_EXECUTION_SECONDS)
+                    ).isoformat(timespec="microseconds"),
+                    _now(),
+                    job_id,
+                ),
+            )
+        return self.get_job(job_id)
+
+    @_on_owner
     def start_job(self, job_id: str) -> Job:
         with self._transaction():
             row = self._conn.execute(
@@ -1293,7 +1381,8 @@ class SqliteStore:
                 )
                 return self.get_job(job_id)
             busy = self._conn.execute(
-                "SELECT 1 FROM jobs WHERE status='running' AND id<>? LIMIT 1",
+                "SELECT 1 FROM jobs WHERE (status='running' OR (status='cancel_requested' AND attempt>0)) "
+                "AND id<>? LIMIT 1",
                 (job_id,),
             ).fetchone()
             if busy is not None:
@@ -1324,9 +1413,9 @@ class SqliteStore:
                 "UPDATE jobs SET status='running', attempt=attempt+1, "
                 "deadline_at=?, progress='generating', updated_at=? WHERE id=?",
                 (
-                    (datetime.now(UTC) + timedelta(minutes=3)).isoformat(
-                        timespec="microseconds"
-                    ),
+                    (
+                        datetime.now(UTC) + timedelta(seconds=JOB_EXECUTION_SECONDS)
+                    ).isoformat(timespec="microseconds"),
                     _now(),
                     job_id,
                 ),
@@ -1443,7 +1532,9 @@ class SqliteStore:
                     vision is not None
                     and (
                         vision.sha256 != prior["vision_sha256"]
-                        or vision.profile_name != prior["vision_profile"]
+                        or not same_profile_identity(
+                            vision.profile_name, prior["vision_profile"]
+                        )
                     )
                 ):
                     raise SubmissionConflict(
@@ -1453,7 +1544,7 @@ class SqliteStore:
             active = self._conn.execute(
                 "SELECT 1 FROM turns WHERE conversation_id=? AND status='pending' "
                 "UNION SELECT 1 FROM tool_invocations WHERE conversation_id=? "
-                "AND status IN ('intent', 'outcome_unknown')",
+                "AND (status='intent' OR (status='outcome_unknown' AND acknowledged_at IS NULL))",
                 (conversation_id, conversation_id),
             ).fetchone()
             if active is not None:
@@ -1462,7 +1553,7 @@ class SqliteStore:
                 "SELECT 1 FROM jobs WHERE conversation_id=? AND "
                 "(status NOT IN ('succeeded', 'failed', 'cancelled') OR "
                 "EXISTS (SELECT 1 FROM tool_invocations WHERE job_id=jobs.id "
-                "AND status='outcome_unknown')) LIMIT 1",
+                "AND status='outcome_unknown' AND acknowledged_at IS NULL)) LIMIT 1",
                 (conversation_id,),
             ).fetchone()
             if occupied is not None:
@@ -1519,9 +1610,9 @@ class SqliteStore:
             )
             if job_id is not None:
                 now = _now()
-                deadline = (datetime.now(UTC) + timedelta(minutes=10)).isoformat(
-                    timespec="microseconds"
-                )
+                deadline = (
+                    datetime.now(UTC) + timedelta(seconds=JOB_EXECUTION_SECONDS)
+                ).isoformat(timespec="microseconds")
                 self._conn.execute(
                     "INSERT INTO jobs (id, turn_id, conversation_id, kind, version, profile_name, "
                     "status, next_step, attempt, deadline_at, progress, "

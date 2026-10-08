@@ -382,15 +382,28 @@ def create_web_app(
                 if (draft := service.store.get_draft(turn.id)) is not None
             ]
             artifacts = service.store.list_artifacts_for_conversation(conversation_id)
-            return record, turns, messages, drafts, artifacts
+            invocations = [
+                item
+                for turn in turns
+                for item in service.store.get_invocations(turn.id)
+            ]
+            return record, turns, messages, drafts, artifacts, invocations
 
-        record, turns, messages, drafts, artifacts = await service.store.run(snapshot)
+        (
+            record,
+            turns,
+            messages,
+            drafts,
+            artifacts,
+            invocations,
+        ) = await service.store.run(snapshot)
         return {
             "conversation": asdict(record),
             "turns": [asdict(turn) for turn in turns],
             "messages": [_message(message) for message in messages],
             "drafts": [asdict(draft) for draft in drafts],
             "artifacts": artifacts,
+            "invocations": [asdict(item) for item in invocations],
         }
 
     @app.post("/api/conversations/{conversation_id}/messages")
@@ -574,7 +587,24 @@ def create_web_app(
                 }
                 for item in records
             ]
-        return {"approvals": items, "uncertain_files": uncertain}
+        unknown = await service.store.run(service.store.list_unknown_invocations)
+        return {
+            "approvals": items,
+            "uncertain_files": uncertain,
+            "uncertain_actions": [asdict(item) for item in unknown],
+        }
+
+    @app.post("/api/uncertain-actions/{invocation_id}/acknowledge")
+    async def acknowledge_unknown(request: Request, invocation_id: str):
+        authorize(request, mutate=True)
+        result = await service.store.run(
+            lambda: service.store.acknowledge_unknown(invocation_id)
+        )
+        return {
+            "invocation_id": result.id,
+            "status": result.status.value,
+            "acknowledged_at": result.acknowledged_at,
+        }
 
     @app.post("/api/file-reconciliation/{invocation_id}")
     async def reconcile_file(request: Request, invocation_id: str):
@@ -592,8 +622,7 @@ def create_web_app(
         invocation = await waiting_invocation(invocation_id)
         assert tool_service is not None and invocation.job_id is not None
         approval_id = await tool_service.trusted_issue_approval(invocation_id)
-        await tool_service.execute(invocation_id, approval_id)
-        runner.launch(invocation.job_id)
+        runner.launch(invocation.job_id, approved=(invocation_id, approval_id))
         return JSONResponse({"job_id": invocation.job_id}, status_code=202)
 
     @app.post("/api/approvals/{invocation_id}/reject")

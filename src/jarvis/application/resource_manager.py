@@ -33,6 +33,18 @@ async def _settle[T](task: asyncio.Task[T]) -> T:
                 return task.result()
 
 
+class CpuWorkerGate(asyncio.Lock):
+    """Shared speech gate also used when no heavy runtime is configured."""
+
+    unavailable = False
+
+    async def __aenter__(self) -> None:
+        await super().__aenter__()
+        if self.unavailable:
+            self.release()
+            raise ResourceUnavailable("Previous CPU worker cleanup is unverified")
+
+
 class RuntimeRouter:
     """Dispatch profiles through one ResourceManager and one device lock."""
 

@@ -16,7 +16,7 @@ from uuid import uuid4
 import httpx
 
 from jarvis.domain.resources import RuntimeIdentity, RuntimeProfile, RuntimeStartFailure
-from jarvis.domain.tools import ContextRecord, ToolContextRecord
+from jarvis.domain.tools import ContextRecord, ToolContextRecord, tool_argument_limit
 from jarvis.domain.types import (
     Message,
     ProviderFailure,
@@ -141,6 +141,7 @@ class LlamaServerRuntime:
             "TEMP": os.environ.get("TEMP", str(cwd)),
             "TMP": os.environ.get("TMP", str(cwd)),
             "LLAMA_API_KEY": api_key,
+            "CUDA_VISIBLE_DEVICES": self.profile.device_uuid,
         }
         arguments = [
             "--model",
@@ -168,7 +169,7 @@ class LlamaServerRuntime:
             "--split-mode",
             "none",
             "--main-gpu",
-            str(self.profile.device_index),
+            "0",
             "--fit",
             "off",
             "--threads",
@@ -647,7 +648,9 @@ class LlamaChatProvider:
                                 "backend_crashed", "Invalid tool arguments"
                             )
                         call_arguments += fragment
-                        if len(call_arguments.encode("utf-8")) > 4096:
+                        if len(call_arguments.encode("utf-8")) > (
+                            tool_argument_limit(call_name) if call_name else 32768
+                        ):
                             raise ProviderFailure(
                                 "invalid_request", "Tool arguments are too large"
                             )
@@ -682,6 +685,12 @@ class LlamaChatProvider:
                 if finish_reason == "tool_calls":
                     if not call_id or not call_name or not call_arguments:
                         raise ProviderFailure("backend_crashed", "Incomplete tool call")
+                    if len(call_arguments.encode("utf-8")) > tool_argument_limit(
+                        call_name
+                    ):
+                        raise ProviderFailure(
+                            "invalid_request", "Tool arguments are too large"
+                        )
                     yield StreamToolCall(call_id, call_name, call_arguments)
                 elif call_id or call_name or call_arguments:
                     raise ProviderFailure("backend_crashed", "Unfinished tool call")

@@ -1,6 +1,6 @@
 # Jarvis: practical local-first architecture
 
-Design date: 5 October 2026. Target: Windows PC, RTX 3060 Ti with 8 GB VRAM, Ryzen 5 5600X, 16 GB RAM, NVMe SSD. This is a design, not an implemented application. Memory figures below are planning estimates and admission targets, not measurements on this PC.
+Design date: 5 October 2026. Target: Windows PC, RTX 3060 Ti with 8 GB VRAM, Ryzen 5 5600X, 16 GB RAM, NVMe SSD. M1–M15 are implemented. Memory figures below are planning estimates and admission targets; measured results are recorded in the verification documents. The implemented desktop shell is described in [desktop verification](docs/DESKTOP_APP.md); its proposed next evolution is a separate, not-yet-implemented [desktop architecture proposal](docs/DESKTOP_ARCHITECTURE.md).
 
 ## 1. Recommended high-level architecture
 

@@ -3,8 +3,14 @@
 import asyncio
 import math
 
-from jarvis.application.resource_manager import ResourceManager, _settle
-from jarvis.domain.speech import RamProbe, SpeechInvalid, SpeechUnavailable, Transcriber
+from jarvis.application.resource_manager import CpuWorkerGate, ResourceManager, _settle
+from jarvis.domain.speech import (
+    RamProbe,
+    SpeechInvalid,
+    SpeechUnavailable,
+    Transcriber,
+    WorkerCleanupUnverified,
+)
 
 MAX_CLIP_BYTES = 3 * 1024 * 1024
 MAX_TRANSCRIPT_CHARS = 65_536
@@ -24,7 +30,7 @@ class SpeechService:
         self.transcriber = transcriber
         self.ram = ram
         self.manager = manager
-        self.cpu_gate = cpu_gate
+        self.cpu_gate = cpu_gate or CpuWorkerGate()
         self._lock = asyncio.Lock()
         self._active_task: asyncio.Task | None = None
 
@@ -36,9 +42,11 @@ class SpeechService:
         async with self._lock:
             self._active_task = asyncio.current_task()
             try:
-                if self.cpu_gate is None:
-                    return await self._run(clip, media_type)
                 async with self.cpu_gate:
+                    if getattr(self.cpu_gate, "unavailable", False):
+                        raise SpeechUnavailable(
+                            "Previous CPU worker cleanup is unverified"
+                        )
                     return await self._run(clip, media_type)
             finally:
                 self._active_task = None
@@ -57,7 +65,13 @@ class SpeechService:
             or available < RAM_PEAK_GIB + RAM_RESERVE_GIB
         ):
             raise SpeechUnavailable("Not enough verified available RAM for speech")
-        text = await self.transcriber.transcribe(clip, media_type)
+        try:
+            text = await self.transcriber.transcribe(clip, media_type)
+        except WorkerCleanupUnverified:
+            self.cpu_gate.unavailable = True  # type: ignore[attr-defined]
+            if self.manager is not None:
+                await _settle(asyncio.create_task(self.manager.mark_cpu_unavailable()))
+            raise
         if len(text) > MAX_TRANSCRIPT_CHARS:
             raise SpeechInvalid("Transcript exceeds the input limit")
         return text.strip()

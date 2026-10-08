@@ -1,0 +1,42 @@
+{
+  "clean_history": [
+    {
+      "ordinal": 1,
+      "arguments": {
+        "prompt": "a cute cat"
+      },
+      "seed": 2111743811,
+      "sha256": "b48134554432690b1f18e312ff38237edce201ac47e42ec81c7b95961bf48f95",
+      "pixel_data_sha256": "a73da40dee4ff1698f568dfa88e7514d1e355810b41b2c0dc8e323b43e6c2346"
+    },
+    {
+      "ordinal": 2,
+      "arguments": {
+        "prompt": "a cute cat"
+      },
+      "seed": 359322204,
+      "sha256": "bf2770aac068df89cd814192de62308d8848fe1157b5ff127db33452b9ac367a",
+      "pixel_data_sha256": "9624791ae16a244f485c5f7c15cad73b8bdf4e29476634a5e489982533d0a874"
+    }
+  ],
+  "legacy_seed_history": [
+    {
+      "ordinal": 1,
+      "arguments": {
+        "prompt": "a cute cat"
+      },
+      "seed": 963658537,
+      "sha256": "159437396de49d1cb5b045ec7ea87b83744544831027e741b33be3a7740f801f",
+      "pixel_data_sha256": "f3db54759fcd61c1617d819842fb228ae6e62d343590c4ad7e8f1ab5008a582b"
+    },
+    {
+      "ordinal": 2,
+      "arguments": {
+        "prompt": "a cute cat"
+      },
+      "seed": 778208592,
+      "sha256": "dbc5a72b3fa907227767aee58dfdf67b9a6a10539c700a1ee752cc6657d0c1a8",
+      "pixel_data_sha256": "7ad6ce31534e5d890dbe26db8229cf16e91ef8f78d88b6048034f3c1de116b20"
+    }
+  ]
+}

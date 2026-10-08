@@ -3,6 +3,25 @@
 from dataclasses import dataclass
 from enum import StrEnum
 
+from jarvis.domain.resources import canonical_gpu_uuid
+
+JOB_EXECUTION_SECONDS = 600
+
+
+def same_profile_identity(first: str, second: str) -> bool:
+    """Treat only the physical GPU UUID's casing as an equivalent saved identity."""
+
+    def canonical(identity: str) -> str:
+        parts = identity.split(":")
+        if len(parts) > 1:
+            try:
+                parts[1] = canonical_gpu_uuid(parts[1])
+            except ValueError:
+                return identity
+        return ":".join(parts)
+
+    return canonical(first) == canonical(second)
+
 
 class JobStatus(StrEnum):
     QUEUED = "queued"

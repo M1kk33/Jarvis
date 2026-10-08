@@ -15,7 +15,7 @@ if (-not (Test-Path -LiteralPath $pythonConsole -PathType Leaf)) {
 if ($EnableBrowser -and -not $EnableNetwork) {
     throw 'EnableBrowser requires EnableNetwork.'
 }
-& $pythonConsole (Join-Path $PSScriptRoot 'repair-launch-environment.py')
+& $pythonConsole (Join-Path $PSScriptRoot 'repair-launch-environment.py') --worker-profiles $privateDir
 if ($LASTEXITCODE -ne 0) { throw 'Could not verify the physical Python environment.' }
 # These arguments are passed directly to pythonw, never evaluated by a shell.
 $launchArgs = @('"' + $entry + '"', '--data-dir', '"' + $privateDir + '"')
@@ -50,9 +50,9 @@ foreach ($destination in $destinations) {
     $shortcut = $shell.CreateShortcut($destination)
     $shortcut.TargetPath = $windowsPowerShell
     $shortcut.Arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $startScript + '" -ArgumentsBase64 ' + $encodedArguments
-    $shortcut.IconLocation = $pythonConsole + ',0'
+    $shortcut.IconLocation = (Join-Path $projectDir 'src\jarvis\interfaces\static\jarvis.ico') + ',0'
     $shortcut.WorkingDirectory = $projectDir
-    $shortcut.Description = 'Open the local Jarvis interface'
+    $shortcut.Description = 'Jarvis — local desktop assistant'
     $shortcut.Save()
     Write-Output "Created $destination"
 }

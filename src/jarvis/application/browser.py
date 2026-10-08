@@ -7,11 +7,17 @@ import math
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event
 from uuid import uuid4
 
 from jarvis.application.resource_manager import ResourceManager, _settle
 from jarvis.application.vision import validate_screenshot
-from jarvis.domain.ports import BrowserRenderer, BrowserStore, PageDownloader
+from jarvis.domain.ports import (
+    BrowserRenderer,
+    BrowserStore,
+    CancellablePageDownloader,
+    PageDownloader,
+)
 from jarvis.domain.speech import RamProbe
 from jarvis.domain.tools import ToolInvocation
 from jarvis.domain.types import BrowserCleanupUnverified, RequestFailure
@@ -59,13 +65,22 @@ class BrowserService:
                 or available < BROWSER_RAM_PEAK_GIB + RAM_RESERVE_GIB
             ):
                 raise RequestFailure("out_of_memory", "Not enough RAM for browser")
-            fetch_task = asyncio.create_task(
-                asyncio.to_thread(self.downloader.download, url)
-            )
+            cancel = Event()
+            download = self.downloader.download
+            if isinstance(self.downloader, CancellablePageDownloader):
+                fetch_task = asyncio.create_task(
+                    asyncio.to_thread(self.downloader.download_cancellable, url, cancel)
+                )
+            else:
+                fetch_task = asyncio.create_task(asyncio.to_thread(download, url))
             try:
                 html, content_type, status = await asyncio.shield(fetch_task)
             except asyncio.CancelledError:
-                await _settle(fetch_task)
+                cancel.set()
+                try:
+                    await _settle(fetch_task)
+                except Exception:  # noqa: BLE001, S110 - cancellation owns cleanup; fetch failure is superseded
+                    pass
                 raise
             if content_type != "text/html" or status != 200:
                 raise RequestFailure("invalid_request", "Browser needs an HTML page")

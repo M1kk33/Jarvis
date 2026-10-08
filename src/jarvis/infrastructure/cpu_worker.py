@@ -6,16 +6,12 @@ import os
 import time
 from pathlib import Path
 
-from jarvis.domain.speech import SpeechUnavailable
+from jarvis.domain.speech import SpeechUnavailable, WorkerCleanupUnverified
 from jarvis.infrastructure.windows_process import (
     OwnedProcess,
     WindowsProcessSupervisor,
     named_job_tree_exited,
 )
-
-
-class WorkerCleanupUnverified(SpeechUnavailable):
-    pass
 
 
 async def settle(task: asyncio.Task):
@@ -36,6 +32,8 @@ def cpu_environment(python: Path, cwd: Path, threads: int) -> dict[str, str]:
         "TEMP": str(cwd),
         "TMP": str(cwd),
         "PYTHONNOUSERSITE": "1",
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8",
         "CUDA_VISIBLE_DEVICES": "-1",
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",

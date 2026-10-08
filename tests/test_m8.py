@@ -7,7 +7,7 @@ import struct
 import zlib
 from pathlib import Path
 from threading import Event
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -163,6 +163,92 @@ def test_fixed_workflow_and_arguments_are_bounded():
     ):
         with pytest.raises(RequestFailure):
             registry.parse(StreamToolCall("call", "generate_image", payload))
+
+
+def test_default_image_variations_are_durable_and_not_reexecuted(tmp_path, monkeypatch):
+    import itertools
+
+    identities = itertools.count(1)
+    monkeypatch.setattr(
+        "jarvis.infrastructure.sqlite_store.uuid4",
+        lambda: UUID(int=next(identities)),
+    )
+    data = tmp_path / "data"
+
+    class RecordingImage(FakeImage):
+        async def generate(self, prompt, seed, invocation_id, cancel):
+            assert prompt == "a cute cat"
+            assert type(seed) is int and 0 <= seed <= 2147483647
+            self.seeds.append(seed)
+            self.calls += 1
+            return self.source
+
+    class PromptOnlyChat(ScriptedChat):
+        def stream_with_tools(self, messages, cancel, instructions, tools):
+            current_turn = next(
+                m.turn_id for m in reversed(messages) if m.role == "user"
+            )
+            result = next(
+                (m for m in messages if m.role == "tool" and m.turn_id == current_turn),
+                None,
+            )
+            if result is None:
+                yield StreamToolCall(
+                    "image-call", "generate_image", '{"prompt":"a cute cat"}'
+                )
+            else:
+                yield StreamDelta("Created the image.")
+            yield StreamTerminal()
+
+    image = RecordingImage(tmp_path / "output")
+    image.seeds = []
+    with SqliteStore(data) as store:
+        tools = ToolService(
+            store,
+            SafeReadTools([], data),
+            ToolPolicy(capabilities=frozenset({"image"})),
+            image_service=ImageService(
+                store,
+                image,
+                FakeManager(),
+                RuntimeProfile("image-fake", 4, 5, 0.2, 0.2),
+            ),
+        )
+        schema = tools.schemas()[0]["function"]["parameters"]
+        assert set(schema["properties"]) == {"prompt"}
+        service = ConversationService(store, PromptOnlyChat(), tool_service=tools)
+        runner = JobRunner(store, service)
+        conversation = store.create_conversation("Variations")
+
+        async def scenario():
+            for submission in ("first", "second"):
+                job, duplicate = await runner.submit(
+                    conversation.id, "Photo of a cat", submission
+                )
+                assert not duplicate
+                assert (await runner.run_job(job.id)).status.value == "succeeded"
+                invocation = store.get_invocations(job.turn_id)[0]
+                assert json.loads(invocation.arguments_json) == {"prompt": "a cute cat"}
+                assert json.loads(invocation.receipt_json)["seed"] == image.seeds[-1]
+                assert (
+                    json.loads(invocation.result_json)["data"]["seed"]
+                    == image.seeds[-1]
+                )
+                again, duplicate = await runner.submit(
+                    conversation.id, "Photo of a cat", submission
+                )
+                assert duplicate and again.id == job.id
+                await runner.run_job(again.id)
+            return store.get_invocations(job.turn_id)[0]
+
+        last = asyncio.run(scenario())
+        assert image.calls == 2
+        assert image.seeds[0] != image.seeds[1]
+    with SqliteStore(data) as reopened:
+        persisted = reopened.get_invocation(last.id)
+        assert persisted.arguments_json == last.arguments_json
+        assert persisted.receipt_json == last.receipt_json
+        assert len(reopened.list_artifacts_for_conversation(conversation.id)) == 2
 
 
 def test_png_and_output_path_validation(tmp_path):
@@ -364,12 +450,15 @@ def test_image_failures_keep_unknown_intent_and_no_artifact(
         assert reopened.list_artifacts_for_conversation(conversation.id) == []
 
 
-def test_image_admission_failure_commits_known_no_effect_result(tmp_path):
+@pytest.mark.parametrize(
+    "memory", [None, {"resource": "ram", "available_gib": 6.5, "required_gib": 7.0}]
+)
+def test_image_admission_failure_commits_known_no_effect_result(tmp_path, memory):
     data = tmp_path / "data"
 
     class NoMemory(FakeManager):
         async def acquire(self, profile):
-            raise AdmissionDenied("Not enough RAM")
+            raise AdmissionDenied("Not enough RAM", **(memory or {}))
 
     manager = NoMemory()
     with SqliteStore(data) as store:
@@ -405,10 +494,13 @@ def test_image_admission_failure_commits_known_no_effect_result(tmp_path):
 
         invocation = asyncio.run(scenario())
         assert invocation.status.value == "complete"
-        assert json.loads(invocation.result_json) == {
+        expected = {
             "status": "error",
             "code": "out_of_memory",
         }
+        if memory:
+            expected["memory"] = memory
+        assert json.loads(invocation.result_json) == expected
         assert store.list_artifacts_for_conversation(conversation.id) == []
         assert manager.aborted == 0 and manager.unloaded == 0
 

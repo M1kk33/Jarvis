@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from uuid import uuid4
 
-from jarvis.application.resource_manager import ResourceManager, _settle
+from jarvis.application.resource_manager import CpuWorkerGate, ResourceManager, _settle
 from jarvis.domain.jobs import JobStatus
 from jarvis.domain.speech import (
     RamProbe,
@@ -14,6 +14,7 @@ from jarvis.domain.speech import (
     SpeechUnavailable,
     SpokenStore,
     Synthesizer,
+    WorkerCleanupUnverified,
 )
 from jarvis.domain.types import Message, StaleTurnError, TurnStatus
 
@@ -69,7 +70,7 @@ class SpokenPlaybackService:
         self.synthesizer = synthesizer
         self.ram = ram
         self.manager = manager
-        self.cpu_gate = cpu_gate or asyncio.Lock()
+        self.cpu_gate = cpu_gate or CpuWorkerGate()
         self._lock = asyncio.Lock()
         self._generation = 0
         self._session: _Session | None = None
@@ -95,8 +96,7 @@ class SpokenPlaybackService:
             turn.status is not TurnStatus.COMPLETE
             or answer.role != "assistant"
             or answer.turn_status is not TurnStatus.COMPLETE
-            or job is None
-            or job.status is not JobStatus.SUCCEEDED
+            or (job is not None and job.status is not JobStatus.SUCCEEDED)
         ):
             raise SpeechInvalid("Only a completed assistant reply can be spoken")
         return answer
@@ -144,6 +144,8 @@ class SpokenPlaybackService:
                 session.conversation_id, session.turn_id, session.answer_id
             )
             async with self.cpu_gate:
+                if getattr(self.cpu_gate, "unavailable", False):
+                    raise SpeechUnavailable("Previous CPU worker cleanup is unverified")
                 if self.manager is None:
                     audio = await self._admitted(session.chunks[index])
                 else:
@@ -174,7 +176,13 @@ class SpokenPlaybackService:
             or available < RAM_PEAK_GIB + RAM_RESERVE_GIB
         ):
             raise SpeechUnavailable("Not enough verified available RAM for speech")
-        audio = await self.synthesizer.synthesize(text)
+        try:
+            audio = await self.synthesizer.synthesize(text)
+        except WorkerCleanupUnverified:
+            self.cpu_gate.unavailable = True  # type: ignore[attr-defined]
+            if self.manager is not None:
+                await _settle(asyncio.create_task(self.manager.mark_cpu_unavailable()))
+            raise
         if not 44 <= len(audio) <= MAX_AUDIO_BYTES or not audio.startswith(b"RIFF"):
             raise SpeechUnavailable("Piper returned invalid or oversized audio")
         return audio

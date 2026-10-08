@@ -5,6 +5,7 @@ import threading
 import tkinter as tk
 import webbrowser
 from collections.abc import Callable
+from pathlib import Path
 from queue import Empty, Queue
 from tkinter import messagebox, ttk
 from typing import Protocol
@@ -15,6 +16,12 @@ class WebServer(Protocol):
     should_exit: bool
 
     async def serve(self) -> None: ...
+
+
+class AppWindow(Protocol):
+    def open(self, url: str) -> None: ...
+    def state(self) -> str: ...
+    def close(self) -> bool: ...
 
 
 class WebControl:
@@ -40,7 +47,7 @@ async def serve_controlled(
             if server.started and not announced:
                 control.events.put(("ready", setup_url))
                 announced = True
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.25)
 
     watcher = asyncio.create_task(monitor())
     try:
@@ -50,11 +57,23 @@ async def serve_controlled(
         await asyncio.gather(watcher, return_exceptions=True)
 
 
-def run_desktop(run_server: Callable[[WebControl], int], title: str) -> int:
+def run_desktop(
+    run_server: Callable[[WebControl], int],
+    title: str,
+    app_window: AppWindow | None = None,
+) -> int:
     root = tk.Tk()
     root.title(title)
     root.geometry("460x210")
     root.resizable(False, False)
+    root.iconbitmap(str(Path(__file__).parent / "static" / "jarvis.ico"))
+    style = ttk.Style(root)
+    style.theme_use("clam")
+    style.configure("TFrame", background="#17191e")
+    style.configure(
+        "TLabel", background="#17191e", foreground="#e7e9ec", font=("Segoe UI", 10)
+    )
+    style.configure("TButton", background="#9ce4cf", foreground="#18362c", padding=8)
     panel = ttk.Frame(root, padding=20)
     panel.pack(fill="both", expand=True)
     ttk.Label(panel, text="Jarvis", font=("Segoe UI", 20)).pack(anchor="w")
@@ -91,7 +110,8 @@ def run_desktop(run_server: Callable[[WebControl], int], title: str) -> int:
     open_button = ttk.Button(
         buttons, text="Открыть интерфейс", command=open_interface, state="disabled"
     )
-    open_button.pack(side="left", padx=(0, 12))
+    if app_window is None:
+        open_button.pack(side="left", padx=(0, 12))
     stop_button = ttk.Button(buttons, text="Остановить Jarvis", command=stop)
     stop_button.pack(side="left")
     root.protocol("WM_DELETE_WINDOW", stop)
@@ -117,17 +137,34 @@ def run_desktop(run_server: Callable[[WebControl], int], title: str) -> int:
                 break
             if event == "ready" and not control.stop.is_set():
                 setup_url = value
-                status.set("Работает. Интерфейс открыт в браузере.")
-                open_button.configure(state="normal")
-                open_interface()
+                if app_window is None:
+                    status.set("Работает. Интерфейс открыт в браузере.")
+                    open_button.configure(state="normal")
+                    open_interface()
+                else:
+                    try:
+                        app_window.open(setup_url)
+                        root.title(title + " · запуск")
+                        status.set("Открывается окно Jarvis…")
+                    except Exception:  # noqa: BLE001 -- report launch errors in the GUI
+                        control.error(
+                            "Не удалось открыть окно Jarvis. Проверьте WebView2 Runtime и установленное окружение."
+                        )
+                        stop()
             elif event == "error":
                 failed = True
+                root.deiconify()
                 status.set("Не удалось запустить или корректно остановить Jarvis.")
                 messagebox.showerror("Jarvis", value, parent=root)
             elif event == "finished":
                 finished = True
                 result = int(value)
                 open_button.configure(state="disabled")
+                if app_window is not None and not app_window.close():
+                    failed = True
+                    result = 1
+                    root.deiconify()
+                    status.set("Не удалось подтвердить остановку окна Jarvis.")
                 if result and not failed:
                     failed = True
                     status.set("Не удалось запустить Jarvis. Проверьте настройки.")
@@ -135,7 +172,18 @@ def run_desktop(run_server: Callable[[WebControl], int], title: str) -> int:
                     root.destroy()
                     return
                 stop_button.configure(state="normal", text="Закрыть")
-        root.after(100, poll)
+        if app_window is not None and not finished and not control.stop.is_set():
+            window_state = app_window.state()
+            if window_state == "ready":
+                root.withdraw()
+            elif window_state == "closing":
+                stop()
+            elif window_state == "failed":
+                control.error(
+                    "Окно Jarvis не запустилось или неожиданно закрылось. Нужен Microsoft Edge WebView2 Runtime."
+                )
+                stop()
+        root.after(250, poll)
 
     thread = threading.Thread(target=worker, name="jarvis-web", daemon=False)
     thread.start()
@@ -145,4 +193,6 @@ def run_desktop(run_server: Callable[[WebControl], int], title: str) -> int:
     finally:
         control.stop.set()
         thread.join()
+        if app_window is not None and not app_window.close():
+            raise RuntimeError("Desktop process tree exit is unverified")
     return result

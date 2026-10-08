@@ -2,6 +2,7 @@
 
 import os
 import sys
+import tomllib
 from pathlib import Path
 from uuid import uuid4
 
@@ -39,6 +40,37 @@ def repair_home(config: Path, physical_home: Path) -> bool:
     return True
 
 
+def repair_workers(data_dir: Path) -> None:
+    """Resolve only interpreters explicitly referenced by installed worker profiles."""
+    for filename, section in (
+        ("image.toml", "image_model"),
+        ("speech.toml", "speech"),
+        ("piper.toml", "piper"),
+    ):
+        profile = data_dir / filename
+        if not profile.is_file():
+            continue
+        values = tomllib.loads(profile.read_text(encoding="utf-8"))[section]
+        interpreter = Path(values["python"])
+        if not interpreter.is_absolute():
+            interpreter = data_dir / interpreter
+        config = interpreter.parent.parent / "pyvenv.cfg"
+        if not config.is_file():
+            continue  # An explicitly configured system Python has no venv home.
+        homes = [
+            line.split("=", 1)[1].strip()
+            for line in config.read_text(encoding="utf-8-sig").splitlines()
+            if line.split("=", 1)[0].strip() == "home"
+        ]
+        if len(homes) != 1:
+            raise RuntimeError("Expected one worker interpreter home")
+        # resolve(strict=True) follows Store AppData redirection to the actual
+        # installation. Keep this worker's interpreter, not the core version.
+        physical = (Path(homes[0]) / "python.exe").resolve(strict=True).parent
+        changed = repair_home(config, physical)
+        print(f"{filename}: Python home {'repaired' if changed else 'verified'}")
+
+
 if __name__ == "__main__":
     if sys.prefix == sys.base_prefix:
         raise RuntimeError("Run this helper through the project virtual environment")
@@ -47,3 +79,7 @@ if __name__ == "__main__":
     physical_home = Path(psutil.Process().exe()).parent
     changed = repair_home(Path(sys.prefix) / "pyvenv.cfg", physical_home)
     print("Python home repaired" if changed else "Python home already verified")
+    if "--worker-profiles" in sys.argv:
+        repair_workers(
+            Path(sys.argv[sys.argv.index("--worker-profiles") + 1]).resolve(strict=True)
+        )
