@@ -1,4 +1,4 @@
-# Native Windows desktop — installed 0.3 preview
+# Native Windows desktop — installed 0.3.1 preview
 
 Date: 9 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
 
@@ -16,7 +16,7 @@ Date: 9 October 2026. Status: installed preview with an offline first-install co
 - First launch also offers installation of the existing five model profiles from an offline pack into a **new** `JarvisData` folder on a chosen drive. It shows progress and supports cancellation. The setup helper inherits the host's job; EOF cancels setup. Normal cancellation removes only that attempt's staging directory. A process/power loss can leave an unpublished staging directory; automatic recovery/resume is not implemented.
 - The pack contains relocatable private Python workers, exact locked wheel files, pinned models and committed ComfyUI source. It excludes venv configuration, user history, arbitrary source-tree files, worker input/output, cache and private GPU calibration. Fresh profiles use the actual first NVIDIA device UUID and conservative, uncalibrated example peaks. Resource reserves/admission rules are unchanged.
 - The pack manifest's SHA-256 is pinned **inside the application**. Every extracted file is checked against its size/hash before publication by directory rename. Windows path aliases, traversal, duplicate entries, links, unexpected files and insufficient disk space fail without overwriting an existing data directory. This depends on trust in the application build; an unsigned application does not authenticate its publisher.
-- Packaged ComfyUI checks source hashes against an application-owned manifest instead of invoking Git. Existing developer installations retain the pinned clean-Git-checkout check. Inference code and one-heavy-runtime scheduling are unchanged.
+- Both existing and packaged ComfyUI installations check source hashes against the application-owned pinned manifest. Runtime startup never invokes Git. The `packaged_source` profile field is retained for compatibility, but no longer selects a different verification path. Inference code and one-heavy-runtime scheduling are unchanged.
 
 ## Build and checks
 
@@ -61,6 +61,15 @@ The fixed native smoke scenario always creates its own temporary data directory,
 - An upgrade test exposed missing PE versions in the MSI File table: Windows Installer omitted binaries after removing the older release. The builder now supplies actual version/language using `MsiGetFileVersionW`; see Microsoft's [file replacement rules](https://learn.microsoft.com/en-us/windows/win32/msi/replacing-existing-files). The failed test package is superseded by **`Jarvis-0.3.0-preview-final.msi`**.
 - The corrected **0.2 → 0.3 upgrade** succeeded. All **2,056** installed application files matched the published build byte for byte. The installed native smoke passed (256.3 MiB sampled peak, microphone refusal, complete tree exit). An attempted downgrade to 0.2 was blocked and 0.3 remained installed. These tests did not reset user profiles, models or conversations.
 - Local cleanup was rejected by automatic tool approval review (`blocked by policy`, no further reason). The temporary component test directory `run/jarvis-native-test-603851ba6a1244e58dada4adf5128d4d` remains (about 16.8 GiB), as does the superseded test MSI. Use only the `-final.msi` artifact for installation. No alternate deletion mechanism was attempted.
+
+### 0.3.1 image-startup fix
+
+- Reproduced a stall with the real desktop JSON-lines entry point and an existing `image.toml` without `packaged_source`. Two text requests completed; image generation remained at `image_loading`, before a ComfyUI worker was created. A timed stack capture located the wait in `subprocess.check_output` for Git `rev-parse`; after its timeout, Python's Windows pipe reader was still waiting on a descendant Git process. The earlier standalone-bootstrap and packaged-model checks did not exercise this combination of inherited desktop pipes and the legacy verification branch.
+- Removed runtime Git invocation for both profile variants. Source bytes still have to match the manifest shipped inside Jarvis and checkpoint verification is unchanged. Tests cover existing/package profiles, prohibit subprocess creation during verification, and reject modified source.
+- The message card now shows live image preparation/generation/saving stages. Cached job timestamps prevent an older HTTP snapshot replacing a newer event; events from a closed conversation stream are ignored. Status nodes remain accessible without opening the activity panel.
+- Offline checks: **333 Python tests passed, 3 hardware opt-ins skipped; 15 JavaScript tests passed**. Mypy and Ruff passed. A real test through the desktop backend using existing profiles completed the image turn in **19.3 seconds** and produced an available PNG artifact. Test conversations used temporary databases; real user history and uncertain/cancelled jobs were not reset or replayed.
+- Patch installer: `dist/Jarvis-0.3.1-preview.msi`. This replaces the 0.3 preview while retaining its data/model paths and the same optional offline component archive.
+- After installing the patch, the same desktop-entry-point check completed the image request in **19.0 seconds**, downloaded a valid PNG (422,457 bytes, `image/png`) and verified full process cleanup. The installed native-window smoke also passed, including microphone refusal and tree exit (249.5 MiB sampled peak without an inference model).
 
 ## Remaining before a complete out-of-box release
 

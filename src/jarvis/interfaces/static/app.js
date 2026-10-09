@@ -47,6 +47,8 @@ if (setupForm) {
   }
 } else {
   const state = { csrf: null, selected: null, fresh: false, source: null, pending: null, spokenEnabled: false };
+  const jobUpdates = new Map();
+  const turnStatusNodes = new Map();
   const conversationsNode = document.getElementById("conversations");
   const messagesNode = document.getElementById("messages");
   const draftNode = document.getElementById("draft");
@@ -257,7 +259,23 @@ if (setupForm) {
     return ({ queued: "В очереди", running: "Выполняется", waiting_approval: "Ожидает подтверждения",
       succeeded: "Готово", complete: "Завершено", cancelled: "Отменено", interrupted: "Прервано",
       failed: "Ошибка", pending: "Ожидание", streaming: "Формирую ответ", loading: "Загружаю модель",
+      image_loading: "Подготавливаю модель изображений", image_generating: "Генерирую изображение",
+      image_finalizing: "Сохраняю изображение",
       cancel_requested: "Отменяется", created: "Создано", started: "Начато" })[value] || value.replaceAll("_", " ");
+  }
+
+  function jobLabel(job) {
+    return statusLabel(job.status === "running" ? (job.progress || job.status) : job.status);
+  }
+
+  function updateJobProgress(job) {
+    if (job.conversation_id !== state.selected) return;
+    const prior = jobUpdates.get(job.turn_id);
+    if (prior?.updated_at && job.updated_at && prior.updated_at > job.updated_at) return;
+    jobUpdates.set(job.turn_id, job);
+    if (jobUpdates.size > 64) jobUpdates.delete(jobUpdates.keys().next().value);
+    const node = turnStatusNodes.get(job.turn_id);
+    if (node) node.textContent = `Состояние: ${jobLabel(job)}`;
   }
 
   const voicePlayer = new window.JarvisVoicePlayer({
@@ -287,10 +305,13 @@ if (setupForm) {
       voicePlayer.stop();
       titleNode.textContent = "Новый диалог";
       messagesNode.replaceChildren();
+      turnStatusNodes.clear();
       welcome();
       return;
     }
-    const data = await api(`/api/conversations/${encodeURIComponent(state.selected)}`);
+    const selected = state.selected;
+    const data = await api(`/api/conversations/${encodeURIComponent(selected)}`);
+    if (selected !== state.selected) return;
     if (voicePlayer.active && !data.messages.some((message) =>
       message.id === voicePlayer.active.messageId && message.role === "assistant"
       && data.turns.some((turn) => turn.id === voicePlayer.active.turnId && turn.status === "complete"))) {
@@ -298,6 +319,7 @@ if (setupForm) {
     }
     titleNode.textContent = data.conversation.title;
     messagesNode.replaceChildren();
+    turnStatusNodes.clear();
     if (!data.messages.length) welcome();
     const turns = new Map(data.turns.map((turn) => [turn.id, turn]));
     const drafts = new Map(data.drafts.map((draft) => [draft.turn_id, draft]));
@@ -347,7 +369,10 @@ if (setupForm) {
         }
         const turn = turns.get(message.turn_id);
         if (turn && turn.status !== "complete") {
-          line(card, `Состояние: ${statusLabel(turn.status)}`, "subtle");
+          const job = jobUpdates.get(turn.id);
+          const node = line(card, `Состояние: ${job ? jobLabel(job) : statusLabel(turn.status)}`, "subtle");
+          node.setAttribute("role", "status");
+          turnStatusNodes.set(turn.id, node);
           const draft = drafts.get(turn.id);
           if (draft) {
             const partial = document.createElement("pre");
@@ -405,8 +430,11 @@ if (setupForm) {
     if (state.source) state.source.close();
     const source = new EventSource(`/api/jobs/${encodeURIComponent(jobId)}/events`);
     state.source = source;
+    const selected = state.selected;
     source.addEventListener("progress", async (event) => {
+      if (state.source !== source || state.selected !== selected) return;
       const snapshot = JSON.parse(event.data);
+      updateJobProgress(snapshot.job);
       draftNode.textContent = snapshot.draft || "";
       if (["succeeded", "failed", "cancelled"].includes(snapshot.job.status)) {
         source.close();
@@ -420,11 +448,14 @@ if (setupForm) {
   }
 
   async function refreshJobs() {
+    const selected = state.selected;
     const data = await api("/api/jobs");
+    if (state.selected !== selected) return;
     jobsNode.replaceChildren();
     const visible = data.jobs.filter((job) => job.conversation_id === state.selected).slice(-10).reverse();
     if (!visible.length) line(jobsNode, "Здесь появится ход выполнения ваших запросов.", "empty");
     for (const job of visible) {
+      updateJobProgress(job);
       const card = document.createElement("div");
       card.className = "card";
       line(card, statusLabel(job.status));

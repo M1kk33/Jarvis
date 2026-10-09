@@ -3,12 +3,14 @@
 import hashlib
 import json
 import stat
+import subprocess
 import zipfile
 from threading import Event
 
 import pytest
 
 from jarvis.infrastructure import component_pack as pack
+from jarvis.infrastructure.image_profile import LocalImageProfile
 
 GPU = "GPU-bfa7eedf-5d52-9ccf-76e2-86b3891ab4d7"
 
@@ -206,3 +208,48 @@ def test_packaged_source_uses_application_hashes_without_git(tmp_path, monkeypat
     source.write_bytes(b"tampered source")
     with pytest.raises(ValueError, match="modified"):
         pack.verify_comfy_source(root, "pinned")
+
+
+@pytest.mark.parametrize("packaged", [False, True])
+def test_existing_and_packaged_image_profiles_verify_without_subprocess(
+    tmp_path, monkeypatch, packaged
+):
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    root = tmp_path / "comfy"
+    root.mkdir()
+    source = root / "main.py"
+    source.write_bytes(b"pinned source")
+    checkpoint = root / "models/checkpoints/test.safetensors"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"small test checkpoint")
+    python = tmp_path / "python.exe"
+    python.touch()
+    commit = "b0b743566f65daafc423b4fea8a2fbda94b3384a"
+    (assets / "comfy-source.json").write_text(
+        json.dumps(
+            {
+                "commit": commit,
+                "files": {"main.py": hashlib.sha256(source.read_bytes()).hexdigest()},
+            }
+        )
+    )
+    monkeypatch.setattr(pack, "ASSETS", assets)
+
+    def no_subprocess(*args, **kwargs):
+        pytest.fail("Image verification must never spawn Git or inherit control pipes")
+
+    monkeypatch.setattr(subprocess, "Popen", no_subprocess)
+    # Construct a tiny fixture instead of allocating the pinned multi-GiB model.
+    profile = LocalImageProfile.model_construct(
+        runtime_commit=commit,
+        root=root,
+        python=python,
+        checkpoint=checkpoint,
+        checkpoint_sha256=hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
+        packaged_source=packaged,
+    )
+    profile.verify_artifacts()
+    source.write_bytes(b"modified source")
+    with pytest.raises(ValueError, match="modified"):
+        profile.verify_artifacts()

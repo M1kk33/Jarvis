@@ -28,6 +28,8 @@ function fixture({ vision = false, decode, history } = {}) {
   let conversations = [];
   let approvals = { approvals: [], uncertain_actions: [], uncertain_files: [] };
   let failSend = false;
+  let jobs = [];
+  const sources = [];
   const handlers = {};
   const canvases = [];
   const revoked = [];
@@ -51,7 +53,11 @@ function fixture({ vision = false, decode, history } = {}) {
     FileReader: class {
       readAsDataURL(file) { this.result = "data:image/png;base64,cG5nLXRlc3Q="; this.onload(); }
     },
-    EventSource: class { addEventListener() {} close() {} },
+    EventSource: class {
+      constructor() { this.handlers = {}; sources.push(this); }
+      addEventListener(name, handler) { this.handlers[name] = handler; }
+      close() { this.closed = true; }
+    },
     fetch: async (url, options = {}) => {
       const payload = options.body ? JSON.parse(options.body) : null;
       requests.push({ url, method: options.method, payload });
@@ -62,7 +68,7 @@ function fixture({ vision = false, decode, history } = {}) {
         value = { id: "conversation-1", title: payload.title };
         conversations = [value];
       } else if (url === "/api/conversations") value = { conversations };
-      else if (url === "/api/jobs") value = { jobs: [] };
+      else if (url === "/api/jobs") value = { jobs };
       else if (url === "/api/approvals") value = approvals;
       else if (url.endsWith("/messages") || url.endsWith("/vision")) {
         value = failSend ? { detail: "Try again" } : { job: { id: "job-1" } };
@@ -71,9 +77,32 @@ function fixture({ vision = false, decode, history } = {}) {
       return { ok, status: ok ? 200 : 503, json: async () => value };
     },
   });
-  return { get, requests, handlers, canvases, revoked, setApprovals(value) { approvals = value; }, failSend(value) { failSend = value; } };
+  return { get, requests, handlers, canvases, revoked, sources, setJobs(value) { jobs = value; }, setApprovals(value) { approvals = value; }, failSend(value) { failSend = value; } };
 }
 const settle = () => new Promise(setImmediate);
+
+test("image progress updates the message and ignores stale closed streams", async () => {
+  const f = fixture({ history: {
+    messages: [{ id: "message-1", turn_id: "turn-1", role: "user", text: "Cat" }],
+    turns: [{ id: "turn-1", status: "pending" }],
+  } });
+  await settle();
+  const job = { id: "job-1", conversation_id: "conversation-1", turn_id: "turn-1", status: "running", progress: "image_loading", updated_at: "2026-10-09T10:00:00Z" };
+  f.setJobs([job]);
+  f.get("message-input").value = "Cat";
+  await f.get("send-form").requestSubmit();
+  const strings = (node) => [node.textContent, ...node.children.flatMap(strings)].join(" ");
+  assert.match(strings(f.get("messages")), /Подготавливаю модель изображений/);
+  const source = f.sources.at(-1);
+  const newer = { ...job, progress: "image_generating", updated_at: "2026-10-09T10:00:01Z" };
+  await source.handlers.progress({ data: JSON.stringify({ job: newer }) });
+  // /api/jobs still returns the older snapshot; it must not undo the SSE update.
+  assert.match(strings(f.get("messages")), /Генерирую изображение/);
+  await f.get("new-conversation").handlers.click();
+  await source.handlers.progress({ data: JSON.stringify({ job: newer, draft: "stale draft" }) });
+  assert.equal(f.get("draft").textContent, "");
+  assert.equal(f.get("conversation-title").textContent, "Новый диалог");
+});
 
 test("first message creates one conversation and failed send keeps submission identity", async () => {
   const f = fixture();

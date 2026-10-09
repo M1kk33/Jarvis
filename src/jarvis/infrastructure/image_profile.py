@@ -1,7 +1,6 @@
 """Strict profile for the sole pinned M8 image worker."""
 
 import hashlib
-import subprocess
 import tomllib
 from pathlib import Path
 from typing import Literal
@@ -9,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from jarvis.domain.resources import RuntimeProfile, canonical_gpu_uuid
+from jarvis.infrastructure.component_pack import verify_comfy_source
 
 
 class LocalImageProfile(BaseModel):
@@ -16,7 +16,7 @@ class LocalImageProfile(BaseModel):
 
     name: Literal["sd15-512-v1"]
     runtime_commit: Literal["b0b743566f65daafc423b4fea8a2fbda94b3384a"]
-    packaged_source: bool = False
+    packaged_source: bool = False  # Retained for compatibility with 0.3 profiles.
     root: Path
     python: Path
     checkpoint: Path
@@ -59,12 +59,10 @@ class LocalImageProfile(BaseModel):
     def verify_artifacts(self) -> None:
         if not self.python.is_file() or not (self.root / "main.py").is_file():
             raise FileNotFoundError("Pinned ComfyUI environment is missing")
-        if self.packaged_source:
-            from jarvis.infrastructure.component_pack import verify_comfy_source
-
-            verify_comfy_source(self.root, self.runtime_commit)
-        else:
-            self._verify_checkout()
+        # Both existing checkouts and packaged installs use the same pinned bytes.
+        # Spawning Git here inherited desktop control pipes; Git for Windows could
+        # leave a child holding stdout after timeout and prevent model startup.
+        verify_comfy_source(self.root, self.runtime_commit)
         if not self.checkpoint.is_file():
             raise FileNotFoundError("Pinned image checkpoint is missing")
         digest = hashlib.sha256()
@@ -78,29 +76,6 @@ class LocalImageProfile(BaseModel):
             raise ValueError(
                 "Checkpoint must be in the pinned ComfyUI checkpoints directory"
             )
-
-    def _verify_checkout(self) -> None:
-        commit = subprocess.check_output(
-            ["git", "-C", str(self.root), "rev-parse", "HEAD"],
-            text=True,
-            timeout=10,
-        ).strip()
-        if commit != self.runtime_commit:
-            raise ValueError("ComfyUI commit does not match the pinned profile")
-        changed = subprocess.check_output(
-            [
-                "git",
-                "-C",
-                str(self.root),
-                "status",
-                "--porcelain",
-                "--untracked-files=no",
-            ],
-            text=True,
-            timeout=10,
-        )
-        if changed.strip():
-            raise ValueError("Pinned ComfyUI tracked files were modified")
 
     def admission_profile(self) -> RuntimeProfile:
         return RuntimeProfile(
