@@ -36,6 +36,7 @@ internal sealed partial class MainWindow : Form
         BackColor = Color.FromArgb(16, 18, 22); ForeColor = Color.FromArgb(230, 235, 238);
         Font = new Font("Segoe UI", 11);
         Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
+        InitializeWindowChrome();
         profileDirectory = Path.Combine(Path.GetTempPath(), "jarvis-view-" + Guid.NewGuid().ToString("N"));
         status.Text = "Jarvis\n\nПодготавливаю ваше рабочее пространство…";
         landing.Controls.Add(status); landing.Controls.Add(actions); Controls.Add(landing);
@@ -46,6 +47,7 @@ internal sealed partial class MainWindow : Form
         permission.Controls.Add(banner); permission.Controls.Add(permissionActions); Controls.Add(permission);
         allow.Click += (_, _) => permissionDecision?.TrySetResult(true);
         deny.Click += (_, _) => permissionDecision?.TrySetResult(false);
+        windowControls.BringToFront();
         Shown += async (_, _) => await StartAsync();
         FormClosing += OnClosingAsync;
     }
@@ -165,6 +167,7 @@ internal sealed partial class MainWindow : Form
         origin = uri.GetLeftPart(UriPartial.Authority);
         browser = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = BackColor };
         Controls.Add(browser); browser.BringToFront(); permission.BringToFront();
+        windowControls.BringToFront();
         var environment = await CoreWebView2Environment.CreateAsync(null, profileDirectory);
         if (stopping) return;
         await browser.EnsureCoreWebView2Async(environment);
@@ -176,6 +179,10 @@ internal sealed partial class MainWindow : Form
         core.Settings.IsStatusBarEnabled = false;
         core.Settings.AreHostObjectsAllowed = false;
         core.Settings.IsWebMessageEnabled = false;
+        core.Settings.IsNonClientRegionSupportEnabled = true;
+        core.Settings.IsZoomControlEnabled = false;
+        // A host-owned style marker only; no page-to-native command bridge.
+        await core.AddScriptToExecuteOnDocumentCreatedAsync("document.addEventListener('DOMContentLoaded',()=>document.documentElement.classList.add('desktop-window'),{once:true})");
         core.Profile.PreferredColorScheme = CoreWebView2PreferredColorScheme.Dark;
         core.NavigationStarting += (_, e) =>
         {
@@ -194,6 +201,7 @@ internal sealed partial class MainWindow : Form
             if (new Uri(core.Source).AbsolutePath != "/") return;
             ready = true;
             landing.Visible = false;
+            LayoutWindowChrome();
             if (options.SmokeOutput is not null) await SmokeAsync();
         };
         core.Navigate(setup);
@@ -212,6 +220,7 @@ internal sealed partial class MainWindow : Form
         using var deferral = e.GetDeferral();
         var decision = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         permissionDecision = decision; permission.Visible = true; permission.BringToFront();
+        windowControls.BringToFront();
         deny.Focus();
         try
         {
@@ -269,10 +278,11 @@ internal sealed partial class MainWindow : Form
     private async Task FailureAsync(string code)
     {
         landing.Visible = true; landing.BringToFront();
+        LayoutWindowChrome();
         status.Text = "Jarvis не смог продолжить работу.\nВаши диалоги остаются в папке данных.\n\nКод: " + code;
         if (options.SmokeOutput is not null)
         {
-            File.WriteAllText(options.SmokeOutput, JsonSerializer.Serialize(new { success = false, code }));
+            File.WriteAllText(options.SmokeOutput, JsonSerializer.Serialize(new { success = false, code, stage = smokeStage, bounds = Bounds, client = RectangleToScreen(ClientRectangle), work_area = Screen.FromHandle(Handle).WorkingArea }));
             Environment.ExitCode = 1;
             Close();
         }
@@ -290,6 +300,7 @@ internal sealed partial class MainWindow : Form
         if (stopping) return;
         stopping = true; CancelPermission();
         landing.Visible = true; landing.BringToFront(); actions.Visible = false;
+        LayoutWindowChrome();
         status.Text = "Завершаю работу…\nСохраняю состояние и освобождаю модели.";
         try
         {
@@ -322,7 +333,7 @@ internal sealed partial class MainWindow : Form
             selectedDataMutex?.ReleaseMutex(); selectedDataMutex?.Dispose(); selectedDataMutex = null;
             try { Directory.Delete(profileDirectory, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             if (options.SmokeOutput is not null && Environment.ExitCode == 0)
-                File.WriteAllText(options.SmokeOutput, JsonSerializer.Serialize(new { success = backendStopped, owned_processes = 1, data_dir = options.DataDirectory, microphone_prompt_tested = microphonePromptTested, setup_completed = setupSmokeCompleted }));
+                File.WriteAllText(options.SmokeOutput, JsonSerializer.Serialize(new { success = backendStopped, owned_processes = 1, data_dir = options.DataDirectory, microphone_prompt_tested = microphonePromptTested, setup_completed = setupSmokeCompleted, window_chrome_tested = windowChromeTested }));
             canClose = true; Close();
         }
         catch (Exception error)
@@ -336,6 +347,7 @@ internal sealed partial class MainWindow : Form
     {
         try
         {
+            await VerifyWindowChromeAsync();
             // A fixed integration scenario; there is no arbitrary page-to-native API.
             var result = await browser!.CoreWebView2.ExecuteScriptAsync("""
                 (async()=>{const s=await (await fetch('/api/session')).json();
@@ -383,7 +395,14 @@ internal sealed partial class MainWindow : Form
             await Task.Delay(300);
             using var screenshot = File.Create(Path.ChangeExtension(options.SmokeOutput!, ".png"));
             await browser.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, screenshot);
-            Close();
+            // Include native caption buttons in a second visual qualification image.
+            Activate();
+            await Task.Delay(200);
+            using var windowImage = new Bitmap(Width, Height);
+            using (var graphics = Graphics.FromImage(windowImage))
+                graphics.CopyFromScreen(Location, Point.Empty, Size);
+            windowImage.Save(Path.ChangeExtension(options.SmokeOutput!, ".window.png"), System.Drawing.Imaging.ImageFormat.Png);
+            closeWindow.PerformClick();
         }
         catch (Exception error) { await FailureAsync(error.GetType().Name); }
     }

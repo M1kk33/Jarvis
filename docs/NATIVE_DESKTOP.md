@@ -1,4 +1,4 @@
-# Native Windows desktop — installed 0.3.1 preview
+# Native Windows desktop — installed 0.3.2 preview
 
 Date: 9 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
 
@@ -70,6 +70,14 @@ The fixed native smoke scenario always creates its own temporary data directory,
 - Offline checks: **333 Python tests passed, 3 hardware opt-ins skipped; 15 JavaScript tests passed**. Mypy and Ruff passed. A real test through the desktop backend using existing profiles completed the image turn in **19.3 seconds** and produced an available PNG artifact. Test conversations used temporary databases; real user history and uncertain/cancelled jobs were not reset or replayed.
 - Patch installer: `dist/Jarvis-0.3.1-preview.msi`. This replaces the 0.3 preview while retaining its data/model paths and the same optional offline component archive.
 - After installing the patch, the same desktop-entry-point check completed the image request in **19.0 seconds**, downloaded a valid PNG (422,457 bytes, `image/png`) and verified full process cleanup. The installed native-window smoke also passed, including microphone refusal and tree exit (249.5 MiB sampled peak without an inference model).
+
+### 0.3.2 integrated window controls
+
+- Removed the standard light Windows caption. Native minimize, maximize/restore and close buttons now occupy the existing dark interface header; no extra title row or visible instance hash is added. Controls have Russian accessibility names and keyboard focus indicators. Close uses the existing verified shutdown path.
+- WebView2's built-in non-client region support makes the existing chat header and brand draggable, with interactive header controls explicitly excluded. There is no web-message or host-object command bridge. Desktop-only spacing reserves room for the native controls and activity panel; the browser interface is unchanged.
+- The window retains its sizing/system-menu styles. Native edge/corner hit testing provides resize handles. Maximized client bounds exclude Windows' invisible sizing frame and match the monitor work area, preserving the taskbar. Button geometry scales with display DPI; multiple-monitor/DPI changes still need manual coverage on suitable hardware.
+- Offline checks: **333 Python tests passed, 3 hardware opt-ins skipped; 15 JavaScript tests passed**. Release publish passed without warnings/errors. The native smoke now checks caption removal, all eight resize handles, maximize/work-area bounds, restored bounds, minimize/restore, CSS drag/exclusion regions and closure through the new close button. It also retains chat, microphone-refusal and full process-tree cleanup coverage.
+- Built and installed `dist/Jarvis-0.3.2-preview.msi` over 0.3.1 (MSI exit 0; installed file version 0.3.2.0). The same installed-host smoke passed with `window_chrome_tested=true` and verified tree exit. A full-window screenshot, including native buttons, was visually inspected. User history/models were not opened by these isolated tests. Actual pointer dragging, Snap layouts and multiple displays are not certified by the synthetic smoke.
 
 ## Remaining before a complete out-of-box release
 

@@ -39,6 +39,11 @@ h3 { margin: 2rem 0 1rem; }
 .header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .header-actions button { font-size: 12px; }
 .header-actions .icon-button { font-size: 20px; border: 0; }
+/* WebView2 handles caption gestures; native buttons share this existing header. */
+.desktop-window .chat header, .desktop-window .brand { -webkit-app-region: drag; app-region: drag; }
+.desktop-window .header-actions, .desktop-window .header-actions *, .desktop-window .edition { -webkit-app-region: no-drag; app-region: no-drag; }
+.desktop-window .chat header { padding-right: 164px; }
+.desktop-window .activity { padding-top: 60px; }
 .voice-line { margin: 0 32px; font-size: 11px; color: var(--muted); }
 .voice-line:has(span:not(:empty)) { padding-top: 10px; }
 .messages { flex: 1; min-height: 0; overflow-y: auto; padding: 32px; scrollbar-gutter: stable; }
