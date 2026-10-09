@@ -272,6 +272,9 @@ def test_web_upload_requires_session_csrf_and_private_preview(tmp_path):
                     ).status_code == 401
                 shown = await client.get(f"/api/artifacts/{source.artifact_id}/preview")
                 assert shown.status_code == 200 and shown.content == image
+                download = await client.get(f"/api/artifacts/{source.artifact_id}")
+                assert download.content == image
+                assert download.headers["content-type"] == "image/png"
                 await runner.wait_for_idle()
 
         asyncio.run(scenario())

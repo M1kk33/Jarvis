@@ -16,6 +16,7 @@ class LocalImageProfile(BaseModel):
 
     name: Literal["sd15-512-v1"]
     runtime_commit: Literal["b0b743566f65daafc423b4fea8a2fbda94b3384a"]
+    packaged_source: bool = False
     root: Path
     python: Path
     checkpoint: Path
@@ -58,6 +59,27 @@ class LocalImageProfile(BaseModel):
     def verify_artifacts(self) -> None:
         if not self.python.is_file() or not (self.root / "main.py").is_file():
             raise FileNotFoundError("Pinned ComfyUI environment is missing")
+        if self.packaged_source:
+            from jarvis.infrastructure.component_pack import verify_comfy_source
+
+            verify_comfy_source(self.root, self.runtime_commit)
+        else:
+            self._verify_checkout()
+        if not self.checkpoint.is_file():
+            raise FileNotFoundError("Pinned image checkpoint is missing")
+        digest = hashlib.sha256()
+        with self.checkpoint.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != self.checkpoint_sha256:
+            raise ValueError("Image checkpoint hash mismatch")
+        expected = self.root / "models" / "checkpoints" / self.checkpoint.name
+        if expected.resolve() != self.checkpoint.resolve():
+            raise ValueError(
+                "Checkpoint must be in the pinned ComfyUI checkpoints directory"
+            )
+
+    def _verify_checkout(self) -> None:
         commit = subprocess.check_output(
             ["git", "-C", str(self.root), "rev-parse", "HEAD"],
             text=True,
@@ -79,19 +101,6 @@ class LocalImageProfile(BaseModel):
         )
         if changed.strip():
             raise ValueError("Pinned ComfyUI tracked files were modified")
-        if not self.checkpoint.is_file():
-            raise FileNotFoundError("Pinned image checkpoint is missing")
-        digest = hashlib.sha256()
-        with self.checkpoint.open("rb") as source:
-            for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                digest.update(chunk)
-        if digest.hexdigest() != self.checkpoint_sha256:
-            raise ValueError("Image checkpoint hash mismatch")
-        expected = self.root / "models" / "checkpoints" / self.checkpoint.name
-        if expected.resolve() != self.checkpoint.resolve():
-            raise ValueError(
-                "Checkpoint must be in the pinned ComfyUI checkpoints directory"
-            )
 
     def admission_profile(self) -> RuntimeProfile:
         return RuntimeProfile(

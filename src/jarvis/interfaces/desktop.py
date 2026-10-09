@@ -1,60 +1,23 @@
 """Small console-free controller for the existing local web interface."""
 
-import asyncio
 import threading
 import tkinter as tk
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
-from queue import Empty, Queue
+from queue import Empty
 from tkinter import messagebox, ttk
 from typing import Protocol
 
+from jarvis.interfaces.web_control import WebControl, serve_controlled
 
-class WebServer(Protocol):
-    started: bool
-    should_exit: bool
-
-    async def serve(self) -> None: ...
+__all__ = ["WebControl", "run_desktop", "serve_controlled"]
 
 
 class AppWindow(Protocol):
     def open(self, url: str) -> None: ...
     def state(self) -> str: ...
     def close(self) -> bool: ...
-
-
-class WebControl:
-    def __init__(self) -> None:
-        self.stop = threading.Event()
-        self.events: Queue[tuple[str, str]] = Queue()
-
-    def error(self, message: str) -> None:
-        self.events.put(("error", message))
-
-
-async def serve_controlled(
-    server: WebServer, control: WebControl, setup_url: str
-) -> None:
-    """Signal readiness only after bind; stop through normal server cleanup."""
-
-    async def monitor() -> None:
-        announced = False
-        while True:
-            if control.stop.is_set():
-                server.should_exit = True
-                return
-            if server.started and not announced:
-                control.events.put(("ready", setup_url))
-                announced = True
-            await asyncio.sleep(0.25)
-
-    watcher = asyncio.create_task(monitor())
-    try:
-        await server.serve()
-    finally:
-        watcher.cancel()
-        await asyncio.gather(watcher, return_exceptions=True)
 
 
 def run_desktop(

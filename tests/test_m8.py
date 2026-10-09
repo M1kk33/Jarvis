@@ -630,6 +630,12 @@ def test_image_tool_handoff_persistence_backup_and_browser_preview(tmp_path):
                     and preview.headers["content-type"] == "image/png"
                 )
                 assert preview.content == _png()
+                download = await client.get(f"/api/artifacts/{artifact_id}")
+                assert download.content == _png()
+                assert download.headers["content-type"] == "image/png"
+                assert download.headers["content-disposition"] == (
+                    'attachment; filename="jarvis-image.png"'
+                )
             await manager.close()
             return job, artifact_id
 

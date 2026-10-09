@@ -46,8 +46,9 @@
           </div>
           <details id="vision-controls" class="vision-controls" hidden>
             <summary>＋ Скриншот · Ctrl + V или перетащите сюда</summary>
-            <label for="screenshot-input">PNG, JPEG или WebP до 20 МиБ · автоматически уменьшим до 1024 × 1024 и 2 МиБ · вопрос до 1 024 символов</label>
-            <input id="screenshot-input" type="file" accept="image/png,image/jpeg,image/webp">
+            <label for="screenshot-input" class="attachment-picker">Выбрать изображение</label>
+            <input id="screenshot-input" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Выбрать изображение">
+            <span class="subtle">PNG, JPEG или WebP до 20 МиБ. Подготовим размер автоматически.</span>
             <img id="screenshot-preview" alt="Выбранный скриншот" hidden>
             <span id="screenshot-status" role="status"></span>
             <button id="remove-screenshot" class="quiet" type="button" hidden>Убрать скриншот</button>

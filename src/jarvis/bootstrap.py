@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import socket
 import sqlite3
 import sys
 from pathlib import Path
@@ -56,11 +57,14 @@ from jarvis.infrastructure.web_fetch import PublicPageFetcher
 from jarvis.interfaces.cli import dispatch, parse_args
 
 if TYPE_CHECKING:
-    from jarvis.interfaces.desktop import WebControl
+    from jarvis.interfaces.web_control import WebControl
 
 
 def main(
-    argv: list[str] | None = None, *, web_control: "WebControl | None" = None
+    argv: list[str] | None = None,
+    *,
+    web_control: "WebControl | None" = None,
+    web_socket: socket.socket | None = None,
 ) -> int:
     args = parse_args(argv)
     try:
@@ -452,12 +456,15 @@ def main(
                             if web_control is None:
                                 await server.serve()
                             else:
-                                from jarvis.interfaces.desktop import serve_controlled
+                                from jarvis.interfaces.web_control import (
+                                    serve_controlled,
+                                )
 
                                 await serve_controlled(
                                     server,
                                     web_control,
                                     f"http://127.0.0.1:{args.port}/setup#token={setup_token}",
+                                    sockets=[web_socket] if web_socket else None,
                                 )
                         finally:
                             if spoken is not None:

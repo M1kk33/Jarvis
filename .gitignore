@@ -4,6 +4,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 dist/
+**/bin/
+**/obj/
 *.py[cod]
 *.db
 *.db-shm

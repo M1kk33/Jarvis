@@ -26,6 +26,8 @@ This installs the locked Python dependencies. The offline fake and tests require
 
 ## Double-click launch on Windows
 
+A separately installed **Jarvis Preview** provides a native C# + WebView2 host, private Python/.NET runtimes and a per-user MSI. First launch can reuse an existing data folder or install the five existing model profiles from a verified offline archive into a new folder. See [native desktop build, checks and release limitations](docs/NATIVE_DESKTOP.md). The following instructions describe the retained legacy launcher.
+
 After installing the locked environment and preparing `model.toml`, install the shortcut once:
 
 ```powershell
@@ -42,7 +44,7 @@ New image requests use an application-chosen seed derived from the committed inv
 
 The window runs in a creation-time kill-on-close Windows Job Object; all WebView2 descendants inherit ownership without breakaway. A per-launch private WebView profile separates it from ordinary browser sessions. The one-time setup URL is sent over a pipe, never in the child command line. Closing requests graceful server shutdown before the host is stopped and its full process tree is verified. Window navigation is restricted to this launch's loopback origin; no Python application API is exposed to page content. See [desktop verification](docs/DESKTOP_APP.md).
 
-The proposed next desktop architecture, including a native Windows host, permission/file-dialog UX, packaging, resource targets and release checks, is recorded in [desktop architecture proposal](docs/DESKTOP_ARCHITECTURE.md). It is a design proposal, not a shipped replacement for the current shell.
+The target desktop architecture, including native permissions/file dialogs, packaging, resource targets and release checks, is recorded in [desktop architecture](docs/DESKTOP_ARCHITECTURE.md). Its preview implementation and remaining release requirements are tracked in [native desktop status](docs/NATIVE_DESKTOP.md).
 
 Shortcut installation verifies the native interpreter's physical location and updates only the `home` entry in `.venv\pyvenv.cfg` atomically. It also verifies the virtual environments explicitly referenced by installed image, speech and Piper profiles, preserving each worker's Python version. This matters when setup runs inside a Microsoft Store editor whose AppData paths are redirected: the ordinary desktop must use the real path. No application data, dependencies, or models are recreated. If that editor recreates the virtual environment, reinstall the shortcuts to verify its home again.
 

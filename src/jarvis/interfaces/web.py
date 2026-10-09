@@ -642,10 +642,22 @@ def create_web_app(
             )
         except (ValueError, OSError) as exc:
             raise HTTPException(404, "Artifact is unavailable") from exc
+        media_type = "application/octet-stream"
+        filename = "artifact.bin"
+        try:
+            try:
+                validate_png(data)
+            except RequestFailure:
+                validate_screenshot(data)
+        except RequestFailure:
+            pass
+        else:
+            media_type = "image/png"
+            filename = "jarvis-image.png"
         return Response(
             data,
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": 'attachment; filename="artifact.bin"'},
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
     @app.get("/api/artifacts/{artifact_id}/preview")

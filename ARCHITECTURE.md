@@ -1,6 +1,8 @@
 # Jarvis: practical local-first architecture
 
-Design date: 5 October 2026. Target: Windows PC, RTX 3060 Ti with 8 GB VRAM, Ryzen 5 5600X, 16 GB RAM, NVMe SSD. M1–M15 are implemented. Memory figures below are planning estimates and admission targets; measured results are recorded in the verification documents. The implemented desktop shell is described in [desktop verification](docs/DESKTOP_APP.md); its proposed next evolution is a separate, not-yet-implemented [desktop architecture proposal](docs/DESKTOP_ARCHITECTURE.md).
+Design date: 5 October 2026. Target: Windows PC, RTX 3060 Ti with 8 GB VRAM, Ryzen 5 5600X, 16 GB RAM, NVMe SSD. M1–M15 are implemented. Memory figures below are planning estimates and admission targets; measured results are recorded in the verification documents. The legacy desktop shell is described in [desktop verification](docs/DESKTOP_APP.md); the first installed C# + WebView2 preview is described in [native desktop verification](docs/NATIVE_DESKTOP.md). The [desktop architecture](docs/DESKTOP_ARCHITECTURE.md) records the full-release direction and outstanding requirements.
+
+Product direction, updated 9 October 2026: build a distributable Windows application with a thin C#/.NET + WebView2 host and the existing Python application core. The user's first priority is a convenient modern out-of-box application, improving the current interface and preserving all currently working features. Optimize where useful and fix measurable regressions; do not require a minimum-hardware specification, arbitrary overhead limit or a new design approval before implementation. Validate primarily on the user's current PC and test installation in a clean environment. Continue fixes and functional development after the first release. See [the product requirements](docs/DESKTOP_ARCHITECTURE_REVIEW.md#product-requirements). These desktop requirements supersede the historical terminal-first/browser-only rollout below, while preserving the core ownership, persistence, resource and process invariants. The original PC above is a qualification machine, not a declared minimum supported configuration.
 
 ## 1. Recommended high-level architecture
 
@@ -63,7 +65,7 @@ Arrows show calls and ownership. In-process calls, callbacks for progress, SQLit
 | Image inference | Dedicated, on-demand ComfyUI child with its own environment. Isolates PyTorch dependencies and releases CPU/GPU allocations when stopped. |
 | Speech, later | CPU workers with a small versioned JSON-lines protocol over pipes, using file references for audio. Supports cancellation without importing model runtimes into the core. |
 | Tools | Small trusted file operations can run in-process. Blocking native tools and browsers use supervised children. A separate process is crash isolation, not a security sandbox. |
-| Browser UI, later | Static page in the user's browser, served by FastAPI inside the app process. No second application server or desktop wrapper. |
+| UI and desktop host | Current static UI is served by FastAPI inside the Python app process. The distributable product adds a thin C#/.NET + WebView2 host for the window, system integration and backend lifecycle; it does not introduce a second business server or database owner. The ordinary browser remains a development interface. |
 
 Model servers speak their existing local HTTP protocols. Do not write a universal model-worker RPC server around them. Jarvis launches, configures, and stops its own copies; it does not depend on a user's independently running inference server.
 

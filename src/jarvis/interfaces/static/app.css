@@ -77,6 +77,9 @@ h3 { margin: 2rem 0 1rem; }
 summary { cursor: pointer; }
 .vision-controls label, .vision-controls input, .vision-controls .subtle { display: block; margin-top: 10px; }
 .vision-controls input { max-width: 100%; }
+.vision-controls .attachment-picker { display: inline-block; padding: 9px 14px; border: 1px solid #46534e; border-radius: 8px; color: var(--accent); cursor: pointer; font-size: 12px; }
+.vision-controls .attachment-picker:hover { background: #26352f; }
+.vision-controls:has(input:focus-visible) .attachment-picker { outline: 2px solid var(--accent); outline-offset: 3px; }
 input::file-selector-button { background: #2e343d; color: #d9dfe6; border: 0; padding: 6px 10px; border-radius: 6px; margin-right: 10px; }
 .vision-controls img { max-width: 240px; max-height: 120px; object-fit: contain; margin-top: 12px; border-radius: 6px; }
 .subtle { color: var(--muted); font-size: 11px; }
