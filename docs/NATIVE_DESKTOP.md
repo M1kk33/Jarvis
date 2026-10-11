@@ -1,4 +1,4 @@
-# Native Windows desktop — installed 0.3.6 preview
+# Native Windows desktop — installed 0.3.7 preview
 
 Date: 11 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
 
@@ -106,6 +106,13 @@ The fixed native smoke scenario always creates its own temporary data directory,
 - The custom frame now opts into Windows 11's native rounded corners with `DWMWA_WINDOW_CORNER_PREFERENCE` / `DWMWCP_ROUND` whenever its HWND is created, including handle recreation. Removing the non-client caption had disabled automatic rounding heuristics. DWM owns clipping, border, shadow and DPI handling; there is no window region, transparency layer, timer or new dependency. Older Windows retains its standard frame behavior.
 - Maximized and snapped windows follow system policy, including square corners. See Microsoft's [rounded-corner guidance](https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/ui/apply-rounded-corners). The native smoke reads the DWM preference before and after maximize/restore and minimize/restore, alongside the existing eight resize handles, work-area bounds, caption controls, chat, microphone refusal and full process-tree cleanup checks. A compositor screenshot visibly confirmed all four rounded corners.
 - **340 Python tests passed, 3 hardware opt-ins skipped; 17 JavaScript tests passed**. Release publish passed. Built and installed `dist/Jarvis-0.3.6-preview.msi` over 0.3.5 (MSI exit 0; installed file version 0.3.6.0). Installed native smoke and visual inspection passed, including verified tree exit. The idle application was closed normally and reopened using its existing shortcut; real history counts were unchanged and SQLite quick check passed. The change is confined to the native window, with no database migration or inference change.
+
+### 0.3.7 quieter interface
+
+- Removed the LOCAL badge, “Личный помощник” eyebrow, local-history footer, persistent keyboard hints, composer disclaimer and activity-panel tagline. The header keeps the conversation title. The conversation list uses the freed sidebar space; the send button remains right-aligned without a spacer label. Removed unused CSS for those elements.
+- The collapsed attachment control is now “＋ Изображение”, with paste/drop guidance in its hover tooltip. The send button's tooltip mentions Enter. The attachment picker, preview, removal, status/error messages and expanded file-format/storage information remain available. Existing keyboard, paste, drop, pin and voice behavior is unchanged; no JavaScript, dependency or backend changes were needed.
+- Qualification used the packaged interface against an isolated real API with synthetic history: screenshots at 850×620, 1280×820 and 1920×1032, right-aligned send button, no page overflow, expanded attachments and the activity panel. Pin/unpin, selection and unsent draft checks passed with zero provider calls. Build-native smoke passed, including window controls and verified process-tree exit.
+- **340 Python tests passed, 3 hardware opt-ins skipped; 17 JavaScript tests passed**. Release publish passed. Built and installed `dist/Jarvis-0.3.7-preview.msi` over 0.3.6 (exit 0; installed file version 0.3.7.0). Installed native smoke and full-window visual inspection passed. The idle app was closed normally and reopened using its original shortcut; history counts were unchanged and SQLite quick check passed.
 
 ## Remaining before a complete out-of-box release
 

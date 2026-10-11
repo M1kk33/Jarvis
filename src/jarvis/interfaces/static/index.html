@@ -12,15 +12,14 @@
 <body>
   <div class="layout">
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark" aria-hidden="true">J</span> Jarvis <span class="edition">LOCAL</span></div>
+      <div class="brand"><span class="brand-mark" aria-hidden="true">J</span> Jarvis</div>
       <button id="new-conversation" class="new-chat" type="button"><span aria-hidden="true">＋</span> Новый диалог</button>
       <h2>Ваши диалоги</h2>
       <nav id="conversations" aria-label="Диалоги"></nav>
-      <div class="sidebar-footer"><span class="status-dot"></span><div>На вашем компьютере<small>История хранится локально</small></div></div>
     </aside>
     <main class="chat">
       <header>
-        <div class="heading"><p class="eyebrow">Личный помощник</p><h1 id="conversation-title">Новый диалог</h1></div>
+        <div class="heading"><h1 id="conversation-title">Новый диалог</h1></div>
         <div class="header-actions">
           <button id="stop-voice" type="button" class="quiet" hidden>Остановить голос</button>
           <button id="refresh" type="button" class="icon-button" title="Обновить" aria-label="Обновить">↻</button>
@@ -41,11 +40,10 @@
               <button id="cancel-transcription" type="button" class="quiet" hidden>Отменить</button>
               <span id="speech-status" role="status"></span>
             </div>
-            <span class="send-hint">Enter — отправить · Shift + Enter — строка</span>
-            <button id="send-button" type="submit">Отправить <span aria-hidden="true">↑</span></button>
+            <button id="send-button" type="submit" title="Отправить (Enter)">Отправить <span aria-hidden="true">↑</span></button>
           </div>
           <details id="vision-controls" class="vision-controls" hidden>
-            <summary>＋ Скриншот · Ctrl + V или перетащите сюда</summary>
+            <summary title="Вставьте через Ctrl + V или перетащите изображение">＋ Изображение</summary>
             <label for="screenshot-input" class="attachment-picker">Выбрать изображение</label>
             <input id="screenshot-input" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Выбрать изображение">
             <span class="subtle">PNG, JPEG или WebP до 20 МиБ. Подготовим размер автоматически.</span>
@@ -56,12 +54,10 @@
           </details>
         </form>
         <p id="notice" class="notice" role="status"></p>
-        <p class="composer-caption">Jarvis может ошибаться. Проверяйте важные ответы.</p>
       </div>
     </main>
     <aside id="activity-panel" class="activity" hidden>
       <div class="activity-heading"><h2>Действия</h2><button id="close-activity" type="button" class="icon-button" aria-label="Закрыть панель действий">×</button></div>
-      <p class="panel-caption">Ход работы и ваш контроль</p>
       <h3>Требуют внимания</h3><div id="approvals"></div>
       <h3>Ход работы</h3><div id="jobs"></div>
     </aside>

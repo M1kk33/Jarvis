@@ -32,12 +32,11 @@ h3 { margin: 2rem 0 1rem; }
 .sidebar { display: flex; flex-direction: column; padding: 28px 16px 18px; background: #17191e; border-right: 1px solid var(--line); min-height: 0; }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 650; letter-spacing: -.7px; margin: 0 8px 30px; }
 .brand-mark { display: inline-grid; place-items: center; background: var(--accent); color: #18362c; width: 31px; height: 34px; border-radius: 10px 10px 10px 3px; font-size: 23px; font-weight: 650; }
-.edition { font-size: 9px; color: var(--muted); border: 1px solid #373c45; border-radius: 4px; padding: 3px 4px; letter-spacing: 1px; margin-left: auto; }
 .new-chat { width: 100%; text-align: left; background: #262c30; color: var(--accent); border-color: #39483f; }
 .new-chat:hover { background: #303d38; }
 .new-chat span { margin-right: 8px; font-size: 20px; vertical-align: -1px; }
 .sidebar h2 { padding-left: 10px; }
-.sidebar nav { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; min-height: 0; }
+.sidebar nav { display: flex; flex: 1; flex-direction: column; gap: 4px; overflow-y: auto; min-height: 0; }
 .sidebar nav button { text-align: left; background: transparent; color: #a8aeb9; font-weight: 400; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; flex-shrink: 0; }
 .sidebar nav button:hover { background: #21252b; color: white; }
 .conversation-row { display: flex; align-items: center; flex-shrink: 0; min-width: 0; border: 1px solid transparent; border-radius: 9px; }
@@ -52,19 +51,16 @@ h3 { margin: 2rem 0 1rem; }
 .pin-chat svg { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
 .pin-chat[aria-pressed="true"] svg { fill: currentColor; }
 @media (hover: none) { .sidebar nav .pin-chat { opacity: 1; } }
-.sidebar-footer { margin-top: auto; padding: 24px 8px 0; display: flex; align-items: center; gap: 10px; font-size: 11px; color: #bac3bf; }
-.sidebar-footer small { display: block; color: #79828c; margin-top: 5px; font-size: 10px; }
-.status-dot { width: 6px; height: 6px; background: var(--accent); border-radius: 50%; flex-shrink: 0; }
 .chat { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .chat header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 22px 32px; border-bottom: 1px solid #22262d; }
 .heading { min-width: 0; }
-.eyebrow { font-size: 10px; color: #818a97; letter-spacing: .1em; text-transform: uppercase; margin: 0; }
+.heading h1 { margin: 0; }
 .header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .header-actions button { font-size: 12px; }
 .header-actions .icon-button { font-size: 20px; border: 0; }
 /* WebView2 handles caption gestures; native buttons share this existing header. */
 .desktop-window .chat header, .desktop-window .brand { -webkit-app-region: drag; app-region: drag; }
-.desktop-window .header-actions, .desktop-window .header-actions *, .desktop-window .edition { -webkit-app-region: no-drag; app-region: no-drag; }
+.desktop-window .header-actions, .desktop-window .header-actions * { -webkit-app-region: no-drag; app-region: no-drag; }
 .desktop-window .chat header { padding-right: 164px; }
 .desktop-window .activity { padding-top: 60px; }
 .voice-line { margin: 0 32px; font-size: 11px; color: var(--muted); }
@@ -96,12 +92,11 @@ h3 { margin: 2rem 0 1rem; }
 .composer textarea:focus-visible { outline: none; }
 .composer-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .composer-tools button { font-size: 12px; }
-.send-hint { margin-left: auto; color: #78818d; font-size: 10px; }
-#send-button { display: flex; align-items: center; gap: 18px; }
+#send-button { display: flex; align-items: center; gap: 18px; margin-left: auto; }
 #send-button span { font-size: 18px; line-height: 1; }
 .speech-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .speech-controls span { color: var(--muted); font-size: 11px; max-width: 250px; }
-.vision-controls { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; font-size: 11px; color: var(--muted); }
+.vision-controls { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px; font-size: 12px; color: var(--muted); }
 summary { cursor: pointer; }
 .vision-controls label, .vision-controls input, .vision-controls .subtle { display: block; margin-top: 10px; }
 .vision-controls input { max-width: 100%; }
@@ -113,12 +108,10 @@ input::file-selector-button { background: #2e343d; color: #d9dfe6; border: 0; pa
 .subtle { color: var(--muted); font-size: 11px; }
 .notice { color: #f0b7a7; margin: 10px auto 0; max-width: 800px; font-size: 12px; overflow-wrap: anywhere; }
 .notice:empty { display: none; }
-.composer-caption { text-align: center; color: #737c87; font-size: 10px; margin: 12px 0 0; }
 .activity { padding: 24px 20px; background: #15181d; border-left: 1px solid var(--line); overflow-y: auto; }
 .activity-heading { display: flex; align-items: center; justify-content: space-between; }
 .activity-heading h2 { color: #e0e6e9; margin: 0; font-size: 14px; letter-spacing: 0; text-transform: none; }
 .activity-heading button { border: 0; }
-.panel-caption { color: var(--muted); font-size: 11px; margin: 4px 0 25px; }
 .card { border: 1px solid var(--line); background: #1c2026; border-radius: 10px; padding: 14px; margin-bottom: 10px; overflow-wrap: anywhere; line-height: 1.6; font-size: 12px; }
 .card pre { font-size: 11px; margin: 8px 0; color: #c0c9d2; }
 .card button { margin: 10px 5px 0 0; font-size: 11px; padding: 8px 10px; }
@@ -131,5 +124,5 @@ input::file-selector-button { background: #2e343d; color: #d9dfe6; border: 0; pa
 .setup-card form { display: grid; gap: 12px; margin-top: 24px; }
 .setup-card input { width: 100%; border: 1px solid #4a535f; border-radius: 8px; padding: 12px; background: #12161b; color: white; }
 @media (max-width: 1100px) { .layout:has(.activity:not([hidden])) { grid-template-columns: 210px minmax(0, 1fr); } .activity { position: fixed; right: 0; top: 0; bottom: 0; width: min(340px, 90vw); z-index: 5; box-shadow: -15px 0 50px #0005; } .layout { grid-template-columns: 210px minmax(0, 1fr); } }
-@media (max-width: 700px) { .layout, .layout:has(.activity:not([hidden])) { grid-template-columns: 150px minmax(0, 1fr); } .sidebar { padding: 20px 10px; } .edition, .sidebar-footer, .send-hint { display: none; } .brand { font-size: 19px; margin-left: 0; gap: 7px; } .chat header { padding: 18px 16px; } .header-actions { gap: 3px; } .messages { padding: 20px 16px; } .composer-wrap { padding: 0 14px 14px; } #send-button { margin-left: auto; } .new-chat { padding: 9px 7px; font-size: 12px; } .welcome { padding-top: 0; } .suggestions { display: none; } .eyebrow { font-size: 9px; } h1 { font-size: 14px; } }
+@media (max-width: 700px) { .layout, .layout:has(.activity:not([hidden])) { grid-template-columns: 150px minmax(0, 1fr); } .sidebar { padding: 20px 10px; } .brand { font-size: 19px; margin-left: 0; gap: 7px; } .chat header { padding: 18px 16px; } .header-actions { gap: 3px; } .messages { padding: 20px 16px; } .composer-wrap { padding: 0 14px 14px; } .new-chat { padding: 9px 7px; font-size: 12px; } .welcome { padding-top: 0; } .suggestions { display: none; } h1 { font-size: 14px; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
