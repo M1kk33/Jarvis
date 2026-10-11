@@ -12,16 +12,11 @@ internal sealed partial class MainWindow : Form
     private readonly Label status = new() { AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter };
     private readonly Panel landing = new() { Dock = DockStyle.Fill, Padding = new Padding(48) };
     private readonly FlowLayoutPanel actions = new() { Dock = DockStyle.Bottom, Height = 70, FlowDirection = FlowDirection.LeftToRight };
-    private readonly Panel permission = new() { Dock = DockStyle.Top, Height = 110, Padding = new Padding(20), Visible = false };
-    private readonly Label banner = new() { Dock = DockStyle.Top, Height = 40 };
-    private readonly Button allow = MakeButton("Разрешить на этот запуск");
-    private readonly Button deny = MakeButton("Не сейчас");
     private WebView2? browser;
     private Process? backend;
     private Task? protocolTask;
-    private TaskCompletionSource<bool>? permissionDecision;
-    private bool microphoneAllowed, stopping, canClose, backendStopped, ready;
-    private bool microphonePromptTested;
+    private bool stopping, canClose, backendStopped, ready;
+    private bool microphonePermissionTested, microphoneFakeStreamTested;
     private bool setupSmokeCompleted;
     private string? origin;
     private readonly string profileDirectory;
@@ -40,13 +35,6 @@ internal sealed partial class MainWindow : Form
         profileDirectory = Path.Combine(Path.GetTempPath(), "jarvis-view-" + Guid.NewGuid().ToString("N"));
         status.Text = "Jarvis\n\nПодготавливаю ваше рабочее пространство…";
         landing.Controls.Add(status); landing.Controls.Add(actions); Controls.Add(landing);
-        permission.BackColor = Color.FromArgb(33, 48, 43);
-        banner.Text = "Разрешить Jarvis записывать голос?\nМикрофон включается только по кнопке записи.";
-        var permissionActions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 38 };
-        permissionActions.Controls.AddRange([allow, deny]);
-        permission.Controls.Add(banner); permission.Controls.Add(permissionActions); Controls.Add(permission);
-        allow.Click += (_, _) => permissionDecision?.TrySetResult(true);
-        deny.Click += (_, _) => permissionDecision?.TrySetResult(false);
         windowControls.BringToFront();
         Shown += async (_, _) => await StartAsync();
         FormClosing += OnClosingAsync;
@@ -166,9 +154,13 @@ internal sealed partial class MainWindow : Form
             || !uri.Fragment.StartsWith("#token=", StringComparison.Ordinal)) throw new InvalidDataException();
         origin = uri.GetLeftPart(UriPartial.Authority);
         browser = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = BackColor };
-        Controls.Add(browser); browser.BringToFront(); permission.BringToFront();
+        Controls.Add(browser); browser.BringToFront();
         windowControls.BringToFront();
-        var environment = await CoreWebView2Environment.CreateAsync(null, profileDirectory);
+        // Smoke tests exercise the real permission event with synthetic media,
+        // never the user's physical microphone and never an auto-allow flag.
+        var environmentOptions = options.SmokeOutput is null ? null
+            : new CoreWebView2EnvironmentOptions("--use-fake-device-for-media-stream");
+        var environment = await CoreWebView2Environment.CreateAsync(null, profileDirectory, environmentOptions);
         if (stopping) return;
         await browser.EnsureCoreWebView2Async(environment);
         if (stopping) return;
@@ -186,10 +178,15 @@ internal sealed partial class MainWindow : Form
         core.Profile.PreferredColorScheme = CoreWebView2PreferredColorScheme.Dark;
         core.NavigationStarting += (_, e) =>
         {
-            CancelPermission();
             e.Cancel = stopping || !Trusted(e.Uri);
         };
         core.FrameNavigationStarting += (_, e) => e.Cancel = true;
+        core.FrameCreated += (_, e) => e.Frame.PermissionRequested += (_, request) =>
+        {
+            request.Handled = true;
+            request.SavesInProfile = false;
+            request.State = CoreWebView2PermissionState.Deny;
+        };
         core.NewWindowRequested += (_, e) => e.Handled = true;
         core.PermissionRequested += RequestPermission;
         core.DownloadStarting += DownloadStarting;
@@ -210,36 +207,19 @@ internal sealed partial class MainWindow : Form
     private bool Trusted(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri)
         && uri.UserInfo.Length == 0 && uri.GetLeftPart(UriPartial.Authority) == origin;
 
-    private async void RequestPermission(object? sender, CoreWebView2PermissionRequestedEventArgs e)
+    private bool CanUseMicrophone(string requestUri, CoreWebView2PermissionKind kind, bool userInitiated)
+        => !stopping && ready && userInitiated && kind == CoreWebView2PermissionKind.Microphone
+            && Trusted(requestUri) && browser?.CoreWebView2 is not null
+            && Trusted(browser.CoreWebView2.Source) && new Uri(browser.CoreWebView2.Source).AbsolutePath == "/";
+
+    private void RequestPermission(object? sender, CoreWebView2PermissionRequestedEventArgs e)
     {
         e.Handled = true; e.SavesInProfile = false; e.State = CoreWebView2PermissionState.Deny;
-        if (stopping || !Trusted(e.Uri) || browser is null || !Trusted(browser.CoreWebView2.Source)
-            || e.PermissionKind != CoreWebView2PermissionKind.Microphone || !e.IsUserInitiated) return;
-        if (microphoneAllowed) { e.State = CoreWebView2PermissionState.Allow; return; }
-        if (permissionDecision is not null) return;
-        using var deferral = e.GetDeferral();
-        var decision = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        permissionDecision = decision; permission.Visible = true; permission.BringToFront();
-        windowControls.BringToFront();
-        deny.Focus();
-        try
-        {
-            bool accepted = await decision.Task.WaitAsync(TimeSpan.FromMinutes(2));
-            if (accepted && !stopping && browser is not null && Trusted(browser.CoreWebView2.Source))
-            { microphoneAllowed = true; e.State = CoreWebView2PermissionState.Allow; }
-        }
-        catch (TimeoutException) { }
-        finally
-        {
-            if (permissionDecision == decision) { permissionDecision = null; permission.Visible = false; }
-            // Dispose completes this WebView2 deferral exactly once.
-        }
-    }
-
-    private void CancelPermission()
-    {
-        permissionDecision?.TrySetResult(false);
-        permission.Visible = false;
+        if (!CanUseMicrophone(e.Uri, e.PermissionKind, e.IsUserInitiated)) return;
+        // Pressing Record is the user's action; no second consent panel is needed.
+        // Re-evaluate every request instead of remembering a blanket permission.
+        e.State = CoreWebView2PermissionState.Allow;
+        if (options.SmokeOutput is not null) microphonePermissionTested = true;
     }
 
     private void DownloadStarting(object? sender, CoreWebView2DownloadStartingEventArgs e)
@@ -298,7 +278,7 @@ internal sealed partial class MainWindow : Form
         if (canClose) return;
         e.Cancel = true;
         if (stopping) return;
-        stopping = true; CancelPermission();
+        stopping = true;
         landing.Visible = true; landing.BringToFront(); actions.Visible = false;
         LayoutWindowChrome();
         status.Text = "Завершаю работу…\nСохраняю состояние и освобождаю модели.";
@@ -333,7 +313,7 @@ internal sealed partial class MainWindow : Form
             selectedDataMutex?.ReleaseMutex(); selectedDataMutex?.Dispose(); selectedDataMutex = null;
             try { Directory.Delete(profileDirectory, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             if (options.SmokeOutput is not null && Environment.ExitCode == 0)
-                File.WriteAllText(options.SmokeOutput, JsonSerializer.Serialize(new { success = backendStopped, owned_processes = 1, data_dir = options.DataDirectory, microphone_prompt_tested = microphonePromptTested, setup_completed = setupSmokeCompleted, window_chrome_tested = windowChromeTested }));
+                File.WriteAllText(options.SmokeOutput, JsonSerializer.Serialize(new { success = backendStopped, owned_processes = 1, data_dir = options.DataDirectory, microphone_permission_tested = microphonePermissionTested, microphone_fake_stream_tested = microphoneFakeStreamTested, setup_completed = setupSmokeCompleted, window_chrome_tested = windowChromeTested }));
             canClose = true; Close();
         }
         catch (Exception error)
@@ -341,6 +321,50 @@ internal sealed partial class MainWindow : Form
             status.Text = "Не удалось подтвердить завершение.\nРесурсы остаются под контролем Jarvis.\nКод: " + error.GetType().Name;
             Environment.ExitCode = 1;
         }
+    }
+
+    private async Task VerifyMicrophoneAsync()
+    {
+        smokeStage = "microphone_permission_policy";
+        string localDocument = origin + "/";
+        if (!CanUseMicrophone(localDocument, CoreWebView2PermissionKind.Microphone, true)
+            || CanUseMicrophone(localDocument, CoreWebView2PermissionKind.Microphone, false))
+            throw new InvalidOperationException("MicrophoneGesturePolicy");
+        foreach (var kind in Enum.GetValues<CoreWebView2PermissionKind>())
+            if (kind != CoreWebView2PermissionKind.Microphone && CanUseMicrophone(localDocument, kind, true))
+                throw new InvalidOperationException("UnexpectedPermissionKind");
+        foreach (string address in new[] { "not-a-uri", "http://127.0.0.1:1/", "https://example.invalid/",
+            new UriBuilder(origin!) { UserName = "blocked" }.Uri.AbsoluteUri })
+            if (CanUseMicrophone(address, CoreWebView2PermissionKind.Microphone, true))
+                throw new InvalidOperationException("UnexpectedPermissionOrigin");
+
+        // Fake media only: verify denial without a gesture, then immediate grant
+        // with a gesture and stopped tracks. No samples are read or saved.
+        int requestIndex = 0;
+        foreach (bool gesture in new[] { false, true, false })
+        {
+            smokeStage = gesture ? "microphone_fake_stream" : "microphone_background_denied";
+            // Earlier ExecuteScriptAsync calls can leave transient user activation.
+            // Let it expire before probing a genuinely background request.
+            if (!gesture) await Task.Delay(TimeSpan.FromSeconds(6));
+            var result = await browser!.CoreWebView2.CallDevToolsProtocolMethodAsync("Runtime.evaluate", JsonSerializer.Serialize(new
+            {
+                expression = gesture
+                    ? "navigator.mediaDevices.getUserMedia({audio:true}).then(s=>{const t=s.getAudioTracks();const live=t.length>0&&t.every(x=>x.readyState==='live');s.getTracks().forEach(x=>x.stop());return live&&t.every(x=>x.readyState==='ended')?'allowed':'bad-stream'}).catch(e=>e.name)"
+                    : "new Promise(resolve=>setTimeout(()=>navigator.mediaDevices.getUserMedia({audio:true}).then(s=>{s.getTracks().forEach(x=>x.stop());resolve('allowed')}).catch(e=>resolve(e.name)),1000))",
+                userGesture = gesture, awaitPromise = true
+            })).WaitAsync(TimeSpan.FromSeconds(10));
+            using var value = JsonDocument.Parse(result);
+            string? outcome = value.RootElement.GetProperty("result").GetProperty("value").GetString();
+            if (outcome != (gesture ? "allowed" : "NotAllowedError"))
+            {
+                smokeStage = $"microphone_request_{requestIndex}_{outcome}";
+                throw new InvalidOperationException("MicrophonePermissionOutcome");
+            }
+            requestIndex++;
+        }
+        if (!microphonePermissionTested) throw new InvalidOperationException("MicrophonePermissionEventMissing");
+        microphoneFakeStreamTested = true;
     }
 
     private async Task SmokeAsync()
@@ -371,26 +395,7 @@ internal sealed partial class MainWindow : Form
                 if (await browser.CoreWebView2.ExecuteScriptAsync("window.__jarvisFinished===true") == "true") { complete = true; break; }
             }
             if (!complete) throw new InvalidOperationException("SmokeIncomplete");
-            await browser.CoreWebView2.CallDevToolsProtocolMethodAsync("Runtime.evaluate", JsonSerializer.Serialize(new
-            {
-                expression = "navigator.mediaDevices.getUserMedia({audio:true}).then(s=>{s.getTracks().forEach(t=>t.stop());window.__micTest='unexpected-allow'}).catch(e=>window.__micTest=e.name)",
-                userGesture = true
-            }));
-            var permissionDeadline = DateTime.UtcNow.AddSeconds(5);
-            while (DateTime.UtcNow < permissionDeadline && permissionDecision is null)
-            {
-                var permissionResult = await browser.CoreWebView2.ExecuteScriptAsync("window.__micTest||null");
-                if (permissionResult != "null") break;
-                await Task.Delay(50);
-            }
-            if (permissionDecision is not null)
-            {
-                microphonePromptTested = true;
-                deny.PerformClick();
-                await Task.Delay(100);
-            }
-            var mediaResult = await browser.CoreWebView2.ExecuteScriptAsync("window.__micTest||null");
-            if (mediaResult == "\"unexpected-allow\"") throw new InvalidOperationException("UnexpectedMicrophoneAccess");
+            await VerifyMicrophoneAsync();
             await browser.CoreWebView2.ExecuteScriptAsync("document.getElementById('refresh').click()");
             await Task.Delay(300);
             using var screenshot = File.Create(Path.ChangeExtension(options.SmokeOutput!, ".png"));

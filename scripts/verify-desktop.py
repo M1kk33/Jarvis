@@ -25,7 +25,13 @@ def verify() -> None:
     report.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     # A packaged app must not depend on the development SDK or interpreter paths.
-    for name in ("DOTNET_ROOT", "PYTHONPATH", "PYTHONHOME", "__PYVENV_LAUNCHER__"):
+    for name in (
+        "DOTNET_ROOT",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "__PYVENV_LAUNCHER__",
+        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+    ):
         env.pop(name, None)
     env["PATH"] = os.environ["SystemRoot"] + "\\System32"
     arguments = ["--smoke-test", str(report)]
@@ -58,6 +64,10 @@ def verify() -> None:
         result = json.loads(report.read_text(encoding="utf-8-sig"))
         if not result.get("success"):
             raise RuntimeError(result)
+        if not result.get("microphone_permission_tested") or not result.get(
+            "microphone_fake_stream_tested"
+        ):
+            raise RuntimeError("Native microphone policy was not verified")
         result["peak_private_mib"] = round(peak / 1024**2, 1)
         result["verified_tree_exit"] = True
         report.write_text(json.dumps(result, indent=2), encoding="utf-8")
