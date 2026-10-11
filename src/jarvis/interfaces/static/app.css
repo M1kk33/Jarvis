@@ -85,6 +85,30 @@ h3 { margin: 2rem 0 1rem; }
 .message .turn-status:hover { color: var(--accent); background: transparent; }
 .attention-notice { display: block; margin: 0 auto 8px; padding: 6px 12px; font-size: 12px; color: var(--accent); }
 .message pre, .card pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 0; }
+.markdown { overflow-wrap: anywhere; }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown p { white-space: pre-wrap; margin: 0 0 1em; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 { font-size: 1.1em; font-weight: 650; line-height: 1.45; color: inherit; margin: 1.3em 0 .6em; letter-spacing: 0; text-transform: none; overflow: visible; white-space: normal; }
+.markdown h1 { font-size: 1.4em; }
+.markdown h2 { font-size: 1.25em; }
+.markdown ul, .markdown ol { margin: .5em 0 1em; padding-left: 1.8em; }
+.markdown li { margin: .35em 0; white-space: pre-wrap; }
+.markdown li > p { margin: .35em 0; }
+.markdown li > ul, .markdown li > ol { margin-bottom: .35em; }
+.markdown code { font-family: Consolas, "Cascadia Mono", monospace; font-size: .92em; background: #ffffff0a; border-radius: 4px; padding: .12em .3em; }
+.message .markdown pre { white-space: pre; overflow-wrap: normal; overflow-x: auto; max-width: 100%; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: #171b21; margin: .75em 0 1em; }
+.markdown pre code { padding: 0; border: 0; background: transparent; }
+.markdown blockquote { margin: .75em 0; border-left: 3px solid var(--accent-border); padding: .2em 1em; color: var(--muted); }
+.markdown blockquote > :last-child { margin-bottom: 0; }
+.markdown hr { border: 0; border-top: 1px solid var(--line); margin: 1.25em 0; }
+.md-table { max-width: 100%; overflow-x: auto; margin: .75em 0 1em; }
+.markdown table { border-collapse: collapse; min-width: 50%; }
+.markdown th, .markdown td { text-align: left; border: 1px solid var(--line); padding: .45em .75em; }
+.markdown th { background: var(--accent-soft); font-weight: 600; }
+.markdown .md-align-center { text-align: center; }
+.markdown .md-align-right { text-align: right; }
+[data-theme="light"] .markdown code, [data-theme="light"] .message .markdown pre { background: #edf0f4; }
 .message details { font-size: 12px; color: var(--muted); padding: 8px 0; }
 .generated-image { display: block; width: min(100%, 512px); height: auto; margin: 12px 0; border-radius: 10px; }
 .composer-wrap { padding: 0 32px 16px; }

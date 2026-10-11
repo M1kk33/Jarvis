@@ -318,6 +318,13 @@ def test_malicious_output_is_text_only_with_no_external_resource_policy(tmp_path
                 assert "evil.example" not in page.text
                 script = (await client.get("/static/app.js")).text
                 assert "textContent" in script and "innerHTML" not in script
+                for filename in ("marked.umd.js", "markdown.js"):
+                    asset = await client.get(f"/static/{filename}")
+                    assert asset.status_code == 200
+                    assert "javascript" in asset.headers["content-type"]
+                    assert f"/static/{filename}" in page.text
+                markdown = (await client.get("/static/markdown.js")).text
+                assert "createTextNode" in markdown and "innerHTML" not in markdown
                 assert (await client.get("/static/unknown.js")).status_code == 404
 
         asyncio.run(scenario())

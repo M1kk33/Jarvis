@@ -352,7 +352,14 @@ def create_web_app(
 
     @app.get("/static/{filename}")
     async def static_file(filename: str):
-        if filename not in {"app.css", "app.js", "voice_player.js", "settings.js"}:
+        if filename not in {
+            "app.css",
+            "app.js",
+            "voice_player.js",
+            "settings.js",
+            "marked.umd.js",
+            "markdown.js",
+        }:
             raise HTTPException(404)
         media = "text/css" if filename.endswith(".css") else "text/javascript"
         return Response(

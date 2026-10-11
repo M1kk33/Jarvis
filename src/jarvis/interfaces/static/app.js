@@ -404,8 +404,11 @@ if (setupForm) {
       const card = document.createElement("article");
       card.className = `message ${message.role}`;
       line(card, message.role === "user" ? "Вы" : "Jarvis", "role");
-      const content = document.createElement("pre");
-      content.textContent = message.text;
+      const content = document.createElement(message.role === "assistant" ? "div" : "pre");
+      if (message.role === "assistant") {
+        content.className = "markdown";
+        window.JarvisMarkdown.render(content, message.text);
+      } else content.textContent = message.text;
       card.append(content);
       if (state.spokenEnabled && message.role === "assistant"
           && turns.get(message.turn_id)?.status === "complete") {
@@ -465,15 +468,17 @@ if (setupForm) {
         const partial = document.createElement("article");
         partial.className = "message assistant";
         line(partial, "Jarvis", "role");
-        const content = document.createElement("pre");
-        content.textContent = liveDrafts.get(turn.id) ?? drafts.get(turn.id)?.text ?? "";
+        const content = document.createElement("div");
+        content.className = "markdown";
+        const draftText = liveDrafts.get(turn.id) ?? drafts.get(turn.id)?.text ?? "";
+        window.JarvisMarkdown.render(content, draftText);
         partial.append(content);
         if (turn.error_code === "output_limit") {
           line(partial, "Ответ остановлен на лимите длины. Попросите более краткий ответ или разбейте вопрос на части.", "subtle");
         }
         // A committed image belongs to Jarvis even before text arrives or after failure.
         const hasArtifacts = appendArtifacts(partial, turn.id, "image/png");
-        partial.hidden = !content.textContent && !hasArtifacts;
+        partial.hidden = !draftText && !hasArtifacts;
         draftNodes.set(turn.id, { card: partial, content, hasArtifacts });
         messagesNode.append(partial);
       }
@@ -552,7 +557,7 @@ if (setupForm) {
         const draft = draftNodes.get(snapshot.job.turn_id);
         if (draft) {
           const follow = messagesNode.scrollHeight - messagesNode.clientHeight - messagesNode.scrollTop < 80;
-          draft.content.textContent = snapshot.draft;
+          window.JarvisMarkdown.render(draft.content, snapshot.draft);
           draft.card.hidden = !snapshot.draft && !draft.hasArtifacts;
           if (follow) messagesNode.scrollTop = messagesNode.scrollHeight;
         }

@@ -6,12 +6,16 @@ const test = require("node:test");
 const vm = require("node:vm");
 const { randomUUID } = require("node:crypto");
 const source = fs.readFileSync(path.join(__dirname, "../src/jarvis/interfaces/static/app.js"), "utf8");
+const markdownSource = fs.readFileSync(path.join(__dirname, "../src/jarvis/interfaces/static/markdown.js"), "utf8");
+const marked = require("../src/jarvis/interfaces/static/marked.umd.js");
 
 function fixture({ vision = false, decode, history, loadHistory, sendShortcut = "enter", conversations: initialConversations = [] } = {}) {
   class Element {
     constructor() { this.children = []; this.handlers = {}; this.hidden = true; this.value = ""; this.files = []; this.textContent = ""; this.style = {}; this.scrollHeight = 36; this.classList = { add() {}, remove() {} }; }
-    append(...items) { this.children.push(...items); }
-    replaceChildren(...items) { this.children = items; }
+    get textContent() { return this._text + this.children.map(child => child.textContent).join(""); }
+    set textContent(value) { this._text = value; this.children = []; }
+    append(...items) { for (const item of items) this.children.push(...(item.fragment ? item.children : [item])); }
+    replaceChildren(...items) { this._text = ""; this.children = []; this.append(...items); }
     addEventListener(name, handler) { this.handlers[name] = handler; }
     setAttribute(name, value) { this[name] = value; }
     removeAttribute(name) { delete this[name]; }
@@ -38,21 +42,23 @@ function fixture({ vision = false, decode, history, loadHistory, sendShortcut = 
   const revoked = [];
   const document = { getElementById: get, createElement: (tag) => {
     const el = new Element();
+    el.tagName = tag;
     if (tag === "canvas") {
       el.getContext = () => ({ drawImage() {} });
       el.toBlob = (callback) => callback(new Blob(["png-test"], { type: "image/png" }));
       canvases.push(el);
     }
     return el;
-  }, createElementNS() { return new Element(); }, addEventListener(name, handler) { handlers[name] = handler; } };
+  }, createDocumentFragment() { const el = new Element(); el.fragment = true; return el; }, createTextNode(text) { const el = new Element(); el.textContent = text; return el; }, createElementNS() { return new Element(); }, addEventListener(name, handler) { handlers[name] = handler; } };
   const windowHandlers = {};
   const window = {
+    marked,
     location: { hash: "", pathname: "/", search: "" }, addEventListener(name, handler) { windowHandlers[name] = handler; },
     getComputedStyle() { return { minHeight: "36px", maxHeight: "156px" }; },
     JarvisVoicePlayer: class { stop() {} setVolume() {} },
     JarvisSettings: class { constructor() { this.preferences = { send_shortcut: sendShortcut }; } async initialize() {} },
   };
-  vm.runInNewContext(source, {
+  const context = vm.createContext({
     window, document, URLSearchParams, crypto: { randomUUID }, Blob, File,
     ResizeObserver: class { observe() {} disconnect() {} },
     URL: { createObjectURL: () => "blob:preview", revokeObjectURL: (url) => revoked.push(url) },
@@ -95,6 +101,8 @@ function fixture({ vision = false, decode, history, loadHistory, sendShortcut = 
       return { ok, status: ok ? 200 : 503, json: async () => value };
     },
   });
+  vm.runInContext(markdownSource, context);
+  vm.runInContext(source, context);
   return { get, requests, handlers, canvases, revoked, sources, focusApp() { return windowHandlers.focus(); }, activeElement() { return document.activeElement; }, failPin(value) { failPin = value; }, setJobs(value) { jobs = value; }, setApprovals(value) { approvals = value; }, failSend(value) { failSend = value; } };
 }
 const settle = () => new Promise(setImmediate);
@@ -249,6 +257,44 @@ test("streaming reply stays in assistant flow through refresh, completion and st
   assert.equal(partial().children[1].textContent, "Final story");
   await progress("stale terminal draft");
   assert.equal(partial().children[1].textContent, "Final story");
+});
+
+test("assistant Markdown renders on restored drafts, streaming and completion; user text stays literal", async () => {
+  const userText = "**literal** <img src=x>";
+  const history = {
+    messages: [{ id: "user-1", turn_id: "turn-1", role: "user", text: userText }],
+    turns: [{ id: "turn-1", status: "generating" }],
+    drafts: [{ turn_id: "turn-1", text: "**Сохранено**" }],
+  };
+  const f = fixture({ history });
+  await settle();
+  f.get("message-input").value = userText;
+  await f.get("send-form").requestSubmit();
+  const cards = () => f.get("messages").children;
+  assert.equal(cards()[0].children[1].tagName, "pre");
+  assert.equal(cards()[0].children[1].textContent, userText);
+  const formatted = () => cards()[1].children[1];
+  assert.equal(formatted().className, "markdown");
+  assert.equal(formatted().children[0].children[0].tagName, "strong");
+  assert.equal(formatted().textContent, "Сохранено");
+  const source = f.sources.at(-1);
+  const event = (draft, status = "running") => source.handlers.progress({ data: JSON.stringify({
+    job: { id: "job-1", conversation_id: "conversation-1", turn_id: "turn-1", status, progress: "generating" }, draft,
+  }) });
+  await event("**Пишу");
+  assert.equal(formatted().textContent, "**Пишу");
+  await event("**Пишу**");
+  assert.equal(formatted().children[0].children[0].tagName, "strong");
+  await f.focusApp();
+  assert.equal(formatted().textContent, "Пишу");
+  history.turns[0].status = "complete";
+  history.messages.push({ id: "assistant-1", turn_id: "turn-1", role: "assistant", text: "# Итог\n\n**Ответ**" });
+  await event("# Итог\n\n**Ответ**", "succeeded");
+  assert.equal(cards().length, 2);
+  assert.equal(formatted().children[0].tagName, "h1");
+  assert.equal(formatted().children[1].children[0].tagName, "strong");
+  await event("stale text");
+  assert.equal(formatted().children[0].tagName, "h1");
 });
 
 test("generated images belong to Jarvis while uploads stay with their user's turn", async () => {
