@@ -1,11 +1,13 @@
 :root { color-scheme: dark; font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; color: #e7e9ec; background: #101216; font-size: 14px; --muted: #969da8; --line: #292d35; --accent: #9ce4cf; }
+/* Derive interaction colours from the selected accent in both themes. */
+:root { --accent-ink: #17212d; --accent-hover-mix: white; --accent-surface: #171b21; --accent-hover: color-mix(in srgb, var(--accent) 85%, var(--accent-hover-mix)); --accent-soft: color-mix(in srgb, var(--accent) 12%, var(--accent-surface)); --accent-soft-hover: color-mix(in srgb, var(--accent) 20%, var(--accent-surface)); --accent-border: color-mix(in srgb, var(--accent) 35%, var(--line)); --accent-focus: color-mix(in srgb, var(--accent) 65%, var(--line)); }
 * { box-sizing: border-box; }
 /* Keep native scrolling; style only its visible chrome. High contrast uses OS defaults. */
 @media (forced-colors: none) {
   *::-webkit-scrollbar { width: 10px; height: 10px; }
   *::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background: transparent; }
   *::-webkit-scrollbar-thumb { min-height: 32px; border: 2px solid transparent; border-radius: 999px; background: #46515c; background-clip: padding-box; }
-  *::-webkit-scrollbar-thumb:hover { background-color: #788c87; }
+  *::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--accent) 40%, #46515c); }
   *::-webkit-scrollbar-thumb:active { background-color: var(--accent); }
   *::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
   @supports not selector(::-webkit-scrollbar) {
@@ -15,8 +17,8 @@
 [hidden] { display: none !important; }
 body { margin: 0; }
 button, input, textarea, select { font: inherit; }
-button { cursor: pointer; border: 1px solid transparent; border-radius: 9px; background: var(--accent); color: #102b24; padding: .7rem 1rem; font-weight: 600; transition: background .15s; }
-button:hover { background: #b7f2e1; }
+button { cursor: pointer; border: 1px solid transparent; border-radius: 9px; background: var(--accent); color: var(--accent-ink); padding: .7rem 1rem; font-weight: 600; transition: background .15s; }
+button:hover { background: var(--accent-hover); }
 button:disabled { opacity: .45; cursor: wait; }
 button.quiet, .icon-button { background: transparent; color: #bbc1cb; border-color: var(--line); }
 button.quiet:hover, .icon-button:hover { color: white; background: #252a32; }
@@ -31,9 +33,9 @@ h3 { margin: 2rem 0 1rem; }
 .layout:has(.activity:not([hidden])) { grid-template-columns: 226px minmax(0, 1fr) 296px; }
 .sidebar { display: flex; flex-direction: column; padding: 28px 16px 18px; background: #17191e; border-right: 1px solid var(--line); min-height: 0; }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 650; letter-spacing: -.7px; margin: 0 8px 30px; }
-.brand-mark { display: inline-grid; place-items: center; background: var(--accent); color: #18362c; width: 31px; height: 34px; border-radius: 10px 10px 10px 3px; font-size: 23px; font-weight: 650; }
-.new-chat { width: 100%; text-align: left; background: #262c30; color: var(--accent); border-color: #39483f; }
-.new-chat:hover { background: #303d38; }
+.brand-mark { display: inline-grid; place-items: center; background: var(--accent); color: var(--accent-ink); width: 31px; height: 34px; border-radius: 10px 10px 10px 3px; font-size: 23px; font-weight: 650; }
+.new-chat { width: 100%; text-align: left; background: var(--accent-soft); color: var(--accent); border-color: var(--accent-border); }
+.new-chat:hover { background: var(--accent-soft-hover); }
 .new-chat span { margin-right: 8px; font-size: 20px; vertical-align: -1px; }
 .sidebar h2 { padding-left: 10px; }
 .sidebar nav { display: flex; flex: 1; flex-direction: column; gap: 4px; overflow-y: auto; min-height: 0; }
@@ -72,7 +74,7 @@ h3 { margin: 2rem 0 1rem; }
 .welcome p { color: var(--muted); max-width: 390px; margin: 0; line-height: 1.8; }
 .suggestions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 28px; }
 .suggestions button { color: #c2c9ce; background: #191d23; border-color: var(--line); font-size: 12px; font-weight: 400; }
-.suggestions button:hover { border-color: #64786f; background: #222a29; }
+.suggestions button:hover { border-color: var(--accent-border); background: var(--accent-soft); }
 .message { max-width: 780px; margin: 0 auto 25px; padding: 17px 21px; border-radius: 14px; line-height: 1.75; font-size: var(--chat-text-size, 14px); }
 .message.assistant { padding-left: 0; padding-right: 0; }
 .message.user { background: #20272a; border: 1px solid #303b3c; }
@@ -86,8 +88,8 @@ h3 { margin: 2rem 0 1rem; }
 .generated-image { display: block; width: min(100%, 512px); height: auto; margin: 12px 0; border-radius: 10px; }
 .composer-wrap { padding: 0 32px 16px; }
 .composer { max-width: 800px; margin: auto; border: 1px solid #3a414a; border-radius: 28px; background: #1b1f25; padding: 8px; box-shadow: 0 8px 30px #0002; }
-.composer:focus-within { border-color: #68877b; }
-.composer.drag-over { border-color: var(--accent); background: #24372f; outline: 2px dashed var(--accent); outline-offset: 4px; }
+.composer:focus-within { border-color: var(--accent-focus); }
+.composer.drag-over { border-color: var(--accent); background: var(--accent-soft); outline: 2px dashed var(--accent); outline-offset: 4px; }
 .composer-row { display: flex; align-items: flex-end; gap: 6px; }
 .composer textarea { display: block; flex: 1; min-width: 0; height: 36px; min-height: 36px; max-height: min(156px, 25dvh); resize: none; overflow-y: hidden; scrollbar-gutter: stable; border: 0; padding: 6px 4px 6px 10px; outline: none; background: transparent; color: #ebedf0; line-height: 24px; }
 .composer textarea::placeholder { color: #858e9b; }
@@ -115,7 +117,7 @@ summary { cursor: pointer; }
 .card pre { font-size: 11px; margin: 8px 0; color: #c0c9d2; }
 .card button { margin: 10px 5px 0 0; font-size: 11px; padding: 8px 10px; }
 .empty { color: #8a949f; font-size: 12px; line-height: 1.7; }
-.count { display: inline-block; background: var(--accent); color: #123629; border-radius: 5px; min-width: 17px; padding: 1px 4px; margin-left: 4px; font-size: 10px; }
+.count { display: inline-block; background: var(--accent); color: var(--accent-ink); border-radius: 5px; min-width: 17px; padding: 1px 4px; margin-left: 4px; font-size: 10px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .setup-page { display: grid; place-items: center; min-height: 100dvh; }
 .setup-card { width: min(440px, calc(100vw - 32px)); padding: 32px; border: 1px solid var(--line); border-radius: 18px; background: #1b1f25; }
@@ -152,16 +154,17 @@ summary { cursor: pointer; }
 .settings-footer p { flex: 1; font-size: 12px; line-height: 1.5; color: var(--muted); margin: 0; }
 :root[data-accent="blue"] { --accent: #a3ccff; }
 :root[data-accent="violet"] { --accent: #d5b7ff; }
-:root[data-theme="light"] { color-scheme: light; background: #f8f9fb; color: #20262f; --muted: #626c7b; --line: #dce1e7; --accent: #26765f; }
+:root[data-theme="light"] { color-scheme: light; background: #f8f9fb; color: #20262f; --muted: #626c7b; --line: #dce1e7; --accent: #26765f; --accent-ink: white; --accent-hover-mix: black; --accent-surface: #f8f9fb; }
 :root[data-theme="light"][data-accent="blue"] { --accent: #2263ae; }
 :root[data-theme="light"][data-accent="violet"] { --accent: #7850a9; }
 [data-theme="light"] button { color: white; }
-[data-theme="light"] button:hover { background: #39816b; }
+[data-theme="light"] button:hover { background: var(--accent-hover); }
 [data-theme="light"] button.quiet, [data-theme="light"] .icon-button { color: #586475; background: transparent; }
 [data-theme="light"] button.quiet:hover, [data-theme="light"] .icon-button:hover { background: #e4e9ee; color: #20262f; }
 [data-theme="light"] .sidebar { background: #edf0f4; }
-[data-theme="light"] .brand-mark { background: #a9e7d4; }
-[data-theme="light"] .new-chat { background: #e0ebe5; color: #27604e; border-color: #c5d7cd; }
+[data-theme="light"] .brand-mark { background: var(--accent); }
+[data-theme="light"] .new-chat { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-border); }
+[data-theme="light"] .new-chat:hover { background: var(--accent-soft-hover); }
 [data-theme="light"] .sidebar nav button { color: #566172; background: transparent; }
 [data-theme="light"] .conversation-row:hover, [data-theme="light"] .sidebar nav button:hover { background: #e0e5ec; color: #20262f; }
 [data-theme="light"] .conversation-row.selected { background: #dce4eb; }
@@ -169,13 +172,15 @@ summary { cursor: pointer; }
 [data-theme="light"] .chat header { border-color: var(--line); }
 [data-theme="light"] .welcome h2, [data-theme="light"] .activity-heading h2 { color: #20262f; }
 [data-theme="light"] .suggestions button, [data-theme="light"] .composer, [data-theme="light"] .card { background: #f0f3f6; border-color: #cbd3dc; color: #374352; }
+[data-theme="light"] .suggestions button:hover { border-color: var(--accent-border); background: var(--accent-soft); }
+[data-theme="light"] .composer:focus-within { border-color: var(--accent-focus); }
 [data-theme="light"] .message.user { background: #e8efed; border-color: #d5e0dc; }
 [data-theme="light"] .message.user .role { color: #5c7068; }
 [data-theme="light"] .composer textarea { color: #20262f; }
-[data-theme="light"] .composer.drag-over { background: #e0f1e9; }
+[data-theme="light"] .composer.drag-over { background: var(--accent-soft); border-color: var(--accent); }
 [data-theme="light"] .activity, [data-theme="light"] #settings-dialog { background: #f8f9fb; }
 [data-theme="light"] .settings-tabs button { color: #596573; background: transparent; }
-[data-theme="light"] .settings-tabs button[aria-pressed="true"], [data-theme="light"] .model-name { color: var(--accent); background: #e7eeeb; }
+[data-theme="light"] .settings-tabs button[aria-pressed="true"], [data-theme="light"] .model-name { color: var(--accent); background: var(--accent-soft); }
 [data-theme="light"] .setting-row select { background: #eef1f5; }
 [data-theme="light"] .notice { color: #a13f29; }
 [data-theme="light"] .card pre { color: #526170; }

@@ -168,6 +168,12 @@ The fixed native smoke scenario always creates its own temporary data directory,
 - The settings release is numbered **0.4.0** at the user's request, superseding the initially installed 0.3.14 package. Application behavior and database schema are unchanged by this version adjustment.
 - Rebuilt and installed 0.4.0 (MSI exit 0; file version 0.4.0.0). The 33 affected offline desktop/settings tests and installed native smoke passed, including theme, microphone policy and verified tree exit. Real data counts stayed unchanged and SQLite quick check passed. Reopened the original shortcut. Current installer: `dist/Jarvis-0.4.0.msi`.
 
+### 0.4.1 accent interaction colours
+
+- Hover colours now derive from the selected accent instead of fixed green values. Shared palette variables cover primary buttons, new-chat borders/hover, suggestion hover, composer focus/drop, scrollbar hover and accent foregrounds. Light-theme overrides follow the same palette, including the brand mark and selected settings section.
+- The 33 affected offline desktop/settings tests and 32 JavaScript tests passed. An isolated browser run checked the packaged interface against the real API for all six dark/light × mint/blue/violet combinations. Computed colours matched the selected palette for Save/Send hover, New Chat hover, suggestion hover, composer focus/drop and the brand mark; hover screenshots were inspected. Existing settings persistence, failed-save, reset, shortcut, draft and small-window checks also passed.
+- Installed 0.4.1 (MSI exit 0; file version 0.4.1.0). Installed native smoke, microphone/theme checks and verified tree exit passed. Real data counts stayed unchanged, SQLite quick check passed, and the original shortcut was reopened. Installer: `dist/Jarvis-0.4.1.msi`.
+
 ## Remaining before a complete out-of-box release
 
 - The offline full archive is implemented. Online delivery, resumable setup, separate capability packs and component upgrades are not implemented. The app-only MSI requires either that archive or an existing configured data folder.
