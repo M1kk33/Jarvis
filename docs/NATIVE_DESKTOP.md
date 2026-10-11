@@ -1,4 +1,4 @@
-# Native Windows desktop — installed 0.3.7 preview
+# Native Windows desktop — installed 0.3.8 preview
 
 Date: 11 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
 
@@ -113,6 +113,14 @@ The fixed native smoke scenario always creates its own temporary data directory,
 - The collapsed attachment control is now “＋ Изображение”, with paste/drop guidance in its hover tooltip. The send button's tooltip mentions Enter. The attachment picker, preview, removal, status/error messages and expanded file-format/storage information remain available. Existing keyboard, paste, drop, pin and voice behavior is unchanged; no JavaScript, dependency or backend changes were needed.
 - Qualification used the packaged interface against an isolated real API with synthetic history: screenshots at 850×620, 1280×820 and 1920×1032, right-aligned send button, no page overflow, expanded attachments and the activity panel. Pin/unpin, selection and unsent draft checks passed with zero provider calls. Build-native smoke passed, including window controls and verified process-tree exit.
 - **340 Python tests passed, 3 hardware opt-ins skipped; 17 JavaScript tests passed**. Release publish passed. Built and installed `dist/Jarvis-0.3.7-preview.msi` over 0.3.6 (exit 0; installed file version 0.3.7.0). Installed native smoke and full-window visual inspection passed. The idle app was closed normally and reopened using its original shortcut; history counts were unchanged and SQLite quick check passed.
+
+### 0.3.8 compact growing composer
+
+- Replaced the tall input/toolbar/attachment rows with a 54-pixel pill: an image picker on the left, one-line textarea, microphone and send icons on the right. Native SVG icons retain Russian accessible names, tooltips and keyboard focus indicators. Manual textarea resizing is disabled. Image selection now opens directly from the plus button; only a pending/attached screenshot adds a preview row. Voice status appears below the input only when nonempty.
+- Textarea height follows actual wrapped content up to 156 CSS pixels (approximately six lines, or 25% of viewport height on shorter windows), then uses native internal scrolling. Deleting text, successful submission and starting a new chat shrink it again. Failed submissions preserve the draft. Suggestion and transcription updates use the same sizing path. A single width-aware ResizeObserver handles window/sidebar/voice-control width changes; it ignores height-only notifications and disconnects on page exit. No polling or runtime dependency was added.
+- Regression checks cover capped sizing, failed-draft retention, successful send/reset shrink, direct file-picker behavior and the existing Enter/Shift+Enter/IME, paste/drop/vision, audio and pin flows. An isolated Chromium run used the packaged interface and real API with temporary synthetic history, checking compact layout at 850×620, 1280×820 and 1920×1032; growth, cap, wheel scrolling, width rewrap, actual file selection/preview/removal, Shift+Enter, failed/retried Enter submission, deletion and reset. Screenshots were inspected. Capability controls were revealed for the UI fixture; inference was fake.
+- **340 Python tests passed, 3 hardware opt-ins skipped; 19 JavaScript tests passed**. Release publish and build-native smoke passed, including microphone refusal, window controls and verified process-tree exit. Installer: `dist/Jarvis-0.3.8-preview.msi`.
+- Installed over 0.3.7 (MSI exit 0; installed file version 0.3.8.0). Installed native smoke and full-window visual inspection passed, with verified tree exit. The idle app was closed normally and reopened through its original shortcut; user history counts were unchanged and SQLite quick check passed.
 
 ## Remaining before a complete out-of-box release
 

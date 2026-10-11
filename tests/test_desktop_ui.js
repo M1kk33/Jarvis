@@ -9,13 +9,14 @@ const source = fs.readFileSync(path.join(__dirname, "../src/jarvis/interfaces/st
 
 function fixture({ vision = false, decode, history, conversations: initialConversations = [] } = {}) {
   class Element {
-    constructor() { this.children = []; this.handlers = {}; this.hidden = true; this.value = ""; this.files = []; this.textContent = ""; this.classList = { add() {}, remove() {} }; }
+    constructor() { this.children = []; this.handlers = {}; this.hidden = true; this.value = ""; this.files = []; this.textContent = ""; this.style = {}; this.scrollHeight = 36; this.classList = { add() {}, remove() {} }; }
     append(...items) { this.children.push(...items); }
     replaceChildren(...items) { this.children = items; }
     addEventListener(name, handler) { this.handlers[name] = handler; }
     setAttribute(name, value) { this[name] = value; }
     removeAttribute(name) { delete this[name]; }
     focus() { document.activeElement = this; }
+    click() { this.clicks = (this.clicks || 0) + 1; this.handlers.click?.(); }
     requestSubmit() { return this.handlers.submit({ preventDefault() {} }); }
   }
   const elements = new Map();
@@ -46,10 +47,12 @@ function fixture({ vision = false, decode, history, conversations: initialConver
   }, createElementNS() { return new Element(); }, addEventListener(name, handler) { handlers[name] = handler; } };
   const window = {
     location: { hash: "", pathname: "/", search: "" }, addEventListener() {},
+    getComputedStyle() { return { minHeight: "36px", maxHeight: "156px" }; },
     JarvisVoicePlayer: class { stop() {} },
   };
   vm.runInNewContext(source, {
     window, document, URLSearchParams, crypto: { randomUUID }, Blob, File,
+    ResizeObserver: class { observe() {} disconnect() {} },
     URL: { createObjectURL: () => "blob:preview", revokeObjectURL: (url) => revoked.push(url) },
     createImageBitmap: decode || (async () => ({ width: 1920, height: 1080, close() {} })),
     FileReader: class {
@@ -90,6 +93,41 @@ function fixture({ vision = false, decode, history, conversations: initialConver
   return { get, requests, handlers, canvases, revoked, sources, activeElement() { return document.activeElement; }, failPin(value) { failPin = value; }, setJobs(value) { jobs = value; }, setApprovals(value) { approvals = value; }, failSend(value) { failSend = value; } };
 }
 const settle = () => new Promise(setImmediate);
+
+test("compact input caps its height, keeps a failed draft and shrinks after send or reset", async () => {
+  const f = fixture();
+  await settle();
+  const input = f.get("message-input");
+  input.value = "A long draft";
+  input.scrollHeight = 400;
+  input.handlers.input();
+  assert.equal(input.style.height, "156px");
+  assert.equal(input.style.overflowY, "auto");
+  f.failSend(true);
+  await f.get("send-form").requestSubmit();
+  assert.equal(input.value, "A long draft");
+  assert.equal(input.style.height, "156px");
+  // Empty content has one line of layout in a real textarea.
+  input.scrollHeight = 36;
+  f.failSend(false);
+  await f.get("send-form").requestSubmit();
+  assert.equal(input.value, "");
+  assert.equal(input.style.height, "36px");
+  assert.equal(input.style.overflowY, "hidden");
+  input.style.height = "156px";
+  await f.get("new-conversation").handlers.click();
+  assert.equal(input.style.height, "36px");
+});
+
+test("attachment icon opens the file picker without submitting or clearing text", async () => {
+  const f = fixture({ vision: true });
+  await settle();
+  f.get("message-input").value = "Keep this draft";
+  f.get("attach-image").click();
+  assert.equal(f.get("screenshot-input").clicks, 1);
+  assert.equal(f.get("message-input").value, "Keep this draft");
+  assert.equal(f.requests.some((r) => r.method === "POST"), false);
+});
 
 test("new conversations appear at the top and reveal it without resetting older-chat browsing", async () => {
   const f = fixture({ conversations: [
@@ -242,7 +280,7 @@ test("pasted screenshot is resized, previewed, and submitted through vision", as
   await settle();
   assert.equal(prevented, true);
   assert.equal(f.get("screenshot-preview").hidden, false);
-  assert.equal(f.get("vision-controls").open, true);
+  assert.equal(f.get("attachment-preview").hidden, false);
   assert.equal(f.canvases[0].width, 1024);
   assert.equal(f.canvases[0].height, 576);
   assert.equal(f.requests.filter((r) => r.method === "POST").length, 0);
@@ -252,6 +290,7 @@ test("pasted screenshot is resized, previewed, and submitted through vision", as
   assert.equal(sent.payload.question, "What is shown?");
   assert.equal(sent.payload.image_base64, "cG5nLXRlc3Q=");
   assert.equal(f.get("screenshot-preview").hidden, true);
+  assert.equal(f.get("attachment-preview").hidden, true);
   assert.equal(f.revoked.length, 1);
 });
 

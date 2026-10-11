@@ -84,27 +84,25 @@ h3 { margin: 2rem 0 1rem; }
 .draft { max-height: 25vh; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 32px 14px; padding: 16px; border-left: 2px solid var(--accent); color: #b5c6bf; font: inherit; }
 .draft:empty { display: none; }
 .composer-wrap { padding: 0 32px 16px; }
-.composer { max-width: 800px; margin: auto; border: 1px solid #3a414a; border-radius: 16px; background: #1b1f25; padding: 16px; box-shadow: 0 8px 30px #0002; }
+.composer { max-width: 800px; margin: auto; border: 1px solid #3a414a; border-radius: 28px; background: #1b1f25; padding: 8px; box-shadow: 0 8px 30px #0002; }
 .composer:focus-within { border-color: #68877b; }
 .composer.drag-over { border-color: var(--accent); background: #24372f; outline: 2px dashed var(--accent); outline-offset: 4px; }
-.composer textarea { display: block; width: 100%; min-height: 70px; max-height: 200px; resize: vertical; border: 0; padding: 2px 4px 12px; outline: none; background: transparent; color: #ebedf0; line-height: 1.6; }
+.composer-row { display: flex; align-items: flex-end; gap: 6px; }
+.composer textarea { display: block; flex: 1; min-width: 0; height: 36px; min-height: 36px; max-height: min(156px, 25dvh); resize: none; overflow-y: hidden; scrollbar-gutter: stable; border: 0; padding: 6px 4px 6px 10px; outline: none; background: transparent; color: #ebedf0; line-height: 24px; }
 .composer textarea::placeholder { color: #858e9b; }
 .composer textarea:focus-visible { outline: none; }
-.composer-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.composer-tools button { font-size: 12px; }
-#send-button { display: flex; align-items: center; gap: 18px; margin-left: auto; }
-#send-button span { font-size: 18px; line-height: 1; }
-.speech-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.speech-controls span { color: var(--muted); font-size: 11px; max-width: 250px; }
-.vision-controls { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px; font-size: 12px; color: var(--muted); }
+.composer-actions, .speech-controls { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.composer .composer-icon { display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; padding: 8px; border: 0; border-radius: 50%; }
+.composer-icon svg { display: block; width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.attachment-controls { flex-shrink: 0; }
+.attachment-controls:has(input:focus-visible) button { outline: 2px solid var(--accent); outline-offset: 3px; }
+.attachment-preview { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; border-top: 1px solid var(--line); margin: 8px 8px 4px; padding-top: 10px; font-size: 11px; color: var(--muted); }
+.attachment-preview img { max-width: 120px; max-height: 80px; object-fit: contain; border-radius: 8px; }
+.attachment-preview button { font-size: 11px; padding: 6px 10px; }
+.attachment-preview .subtle { flex-basis: 100%; }
+.composer-status { color: var(--muted); font-size: 11px; padding: 8px 10px 4px; }
+.composer-status:empty { display: none; }
 summary { cursor: pointer; }
-.vision-controls label, .vision-controls input, .vision-controls .subtle { display: block; margin-top: 10px; }
-.vision-controls input { max-width: 100%; }
-.vision-controls .attachment-picker { display: inline-block; padding: 9px 14px; border: 1px solid #46534e; border-radius: 8px; color: var(--accent); cursor: pointer; font-size: 12px; }
-.vision-controls .attachment-picker:hover { background: #26352f; }
-.vision-controls:has(input:focus-visible) .attachment-picker { outline: 2px solid var(--accent); outline-offset: 3px; }
-input::file-selector-button { background: #2e343d; color: #d9dfe6; border: 0; padding: 6px 10px; border-radius: 6px; margin-right: 10px; }
-.vision-controls img { max-width: 240px; max-height: 120px; object-fit: contain; margin-top: 12px; border-radius: 6px; }
 .subtle { color: var(--muted); font-size: 11px; }
 .notice { color: #f0b7a7; margin: 10px auto 0; max-width: 800px; font-size: 12px; overflow-wrap: anywhere; }
 .notice:empty { display: none; }

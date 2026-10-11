@@ -77,10 +77,38 @@ if (setupForm) {
   let attachmentPending = false;
   const screenshotStatus = document.getElementById("screenshot-status");
   const removeScreenshot = document.getElementById("remove-screenshot");
+  const attachmentPreview = document.getElementById("attachment-preview");
   const sendForm = document.getElementById("send-form");
   const activityPanel = document.getElementById("activity-panel");
   const activityToggle = document.getElementById("toggle-activity");
   let attentionIds = new Set();
+
+  function resizeInput() {
+    const scrollTop = inputNode.scrollTop;
+    inputNode.style.height = "auto";
+    const style = window.getComputedStyle(inputNode);
+    const height = Math.max(parseFloat(style.minHeight), Math.min(inputNode.scrollHeight, parseFloat(style.maxHeight)));
+    inputNode.style.height = `${height}px`;
+    inputNode.style.overflowY = inputNode.scrollHeight > height ? "auto" : "hidden";
+    inputNode.scrollTop = scrollTop;
+  }
+
+  function setInput(value) {
+    inputNode.value = value;
+    resizeInput();
+  }
+
+  inputNode.addEventListener("input", resizeInput);
+  // Width also changes when the activity panel or voice controls open.
+  // Ignore height-only notifications to avoid a resize feedback loop.
+  let inputWidth = 0;
+  const inputObserver = new ResizeObserver(([entry]) => {
+    if (entry.contentRect.width === inputWidth) return;
+    inputWidth = entry.contentRect.width;
+    resizeInput();
+  });
+  inputObserver.observe(inputNode);
+  resizeInput();
 
   function showActivity(visible) {
     activityPanel.hidden = !visible;
@@ -117,7 +145,7 @@ if (setupForm) {
     const suggestions = document.createElement("div");
     suggestions.className = "suggestions";
     for (const [label, text] of [["Разобраться в теме", "Помоги разобраться в теме: "], ["Составить план", "Помоги составить план для "], ["Обсудить идею", "Давай обсудим идею: "]]) {
-      suggestions.append(button(label, () => { inputNode.value = text; inputNode.focus(); }));
+      suggestions.append(button(label, () => { setInput(text); inputNode.focus(); }));
     }
     panel.append(suggestions);
     messagesNode.append(panel);
@@ -134,6 +162,7 @@ if (setupForm) {
     screenshotInput.value = "";
     screenshotStatus.textContent = "";
     removeScreenshot.hidden = true;
+    attachmentPreview.hidden = true;
   }
 
   async function attachScreenshot(file) {
@@ -144,7 +173,7 @@ if (setupForm) {
     if (file.size > 20 * 1024 * 1024) { say("Исходное изображение должно быть не больше 20 МиБ."); return; }
     const generation = ++attachmentGeneration;
     attachmentPending = true;
-    visionControls.open = true;
+    attachmentPreview.hidden = false;
     screenshotStatus.textContent = "Подготавливаю скриншот…";
     let bitmap;
     try {
@@ -178,6 +207,7 @@ if (setupForm) {
     } catch (error) {
       if (generation === attachmentGeneration) {
         screenshotStatus.textContent = screenshotFile ? "Предыдущий скриншот сохранён." : "";
+        attachmentPreview.hidden = !screenshotFile;
         say(error.message || "Не удалось прочитать изображение.");
       }
     } finally {
@@ -187,6 +217,7 @@ if (setupForm) {
   }
 
   removeScreenshot.addEventListener("click", clearScreenshot);
+  document.getElementById("attach-image").addEventListener("click", () => screenshotInput.click());
   screenshotInput.addEventListener("change", () => {
     const file = screenshotInput.files[0];
     screenshotInput.value = "";
@@ -615,7 +646,7 @@ if (setupForm) {
       clearScreenshot();
       state.selected = null;
       state.fresh = true;
-      inputNode.value = "";
+      setInput("");
       conversationsNode.scrollTop = 0;
       await refreshAll();
       inputNode.focus();
@@ -655,7 +686,7 @@ if (setupForm) {
           text, submission_id: state.pending.id,
         });
       state.pending = null;
-      inputNode.value = "";
+      setInput("");
       clearScreenshot();
       listen(result.job.id);
       await refreshAll();
@@ -710,7 +741,7 @@ if (setupForm) {
           if (!result.text) {
             speechStatus.textContent = "Речь не обнаружена. Ничего не отправлено.";
           } else {
-            inputNode.value = [inputNode.value.trim(), result.text].filter(Boolean).join("\n");
+            setInput([inputNode.value.trim(), result.text].filter(Boolean).join("\n"));
             inputNode.focus();
             speechStatus.textContent = "Проверьте распознанный текст и нажмите «Отправить».";
           }
@@ -740,6 +771,7 @@ if (setupForm) {
     finally { cancelTranscription.disabled = false; cancelTranscription.hidden = true; }
   });
   window.addEventListener("pagehide", () => {
+    inputObserver.disconnect();
     voicePlayer.stop();
     if (recorder) {
       recorder.onstop = null;

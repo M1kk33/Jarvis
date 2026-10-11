@@ -32,26 +32,38 @@
       <div class="composer-wrap">
         <form id="send-form" class="composer">
           <label for="message-input" class="sr-only">Сообщение</label>
-          <textarea id="message-input" rows="3" maxlength="65536" placeholder="О чём поговорим?" required></textarea>
-          <div class="composer-tools">
-            <div id="speech-controls" class="speech-controls" hidden>
-              <button id="record-button" type="button" class="quiet">◉ Голос</button>
-              <button id="stop-recording" type="button" hidden>Завершить запись</button>
-              <button id="cancel-transcription" type="button" class="quiet" hidden>Отменить</button>
-              <span id="speech-status" role="status"></span>
+          <div class="composer-row">
+            <div id="vision-controls" class="attachment-controls" hidden>
+              <button id="attach-image" class="composer-icon quiet" type="button" title="Прикрепить изображение · Ctrl + V или перетащите сюда" aria-label="Прикрепить изображение">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+              <input id="screenshot-input" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Выбрать изображение">
             </div>
-            <button id="send-button" type="submit" title="Отправить (Enter)">Отправить <span aria-hidden="true">↑</span></button>
+            <textarea id="message-input" rows="1" maxlength="65536" placeholder="Спросить Jarvis" required></textarea>
+            <div class="composer-actions">
+              <div id="speech-controls" class="speech-controls" hidden>
+                <button id="record-button" type="button" class="composer-icon quiet" title="Записать голос" aria-label="Записать голос">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3M9 22h6"/></svg>
+                </button>
+                <button id="stop-recording" type="button" class="composer-icon" title="Завершить запись" aria-label="Завершить запись" hidden>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                </button>
+                <button id="cancel-transcription" type="button" class="composer-icon quiet" title="Отменить распознавание" aria-label="Отменить распознавание" hidden>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg>
+                </button>
+              </div>
+              <button id="send-button" class="composer-icon" type="submit" title="Отправить (Enter)" aria-label="Отправить">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg>
+              </button>
+            </div>
           </div>
-          <details id="vision-controls" class="vision-controls" hidden>
-            <summary title="Вставьте через Ctrl + V или перетащите изображение">＋ Изображение</summary>
-            <label for="screenshot-input" class="attachment-picker">Выбрать изображение</label>
-            <input id="screenshot-input" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Выбрать изображение">
-            <span class="subtle">PNG, JPEG или WebP до 20 МиБ. Подготовим размер автоматически.</span>
+          <div id="attachment-preview" class="attachment-preview" hidden>
             <img id="screenshot-preview" alt="Выбранный скриншот" hidden>
             <span id="screenshot-status" role="status"></span>
             <button id="remove-screenshot" class="quiet" type="button" hidden>Убрать скриншот</button>
             <span class="subtle">Скриншот сохранится в диалоге и резервных копиях. Удаление скриншотов пока не предусмотрено.</span>
-          </details>
+          </div>
+          <div id="speech-status" class="composer-status" role="status"></div>
         </form>
         <p id="notice" class="notice" role="status"></p>
       </div>
