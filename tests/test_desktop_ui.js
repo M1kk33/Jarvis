@@ -7,7 +7,7 @@ const vm = require("node:vm");
 const { randomUUID } = require("node:crypto");
 const source = fs.readFileSync(path.join(__dirname, "../src/jarvis/interfaces/static/app.js"), "utf8");
 
-function fixture({ vision = false, decode, history, loadHistory, conversations: initialConversations = [] } = {}) {
+function fixture({ vision = false, decode, history, loadHistory, sendShortcut = "enter", conversations: initialConversations = [] } = {}) {
   class Element {
     constructor() { this.children = []; this.handlers = {}; this.hidden = true; this.value = ""; this.files = []; this.textContent = ""; this.style = {}; this.scrollHeight = 36; this.classList = { add() {}, remove() {} }; }
     append(...items) { this.children.push(...items); }
@@ -49,7 +49,8 @@ function fixture({ vision = false, decode, history, loadHistory, conversations: 
   const window = {
     location: { hash: "", pathname: "/", search: "" }, addEventListener(name, handler) { windowHandlers[name] = handler; },
     getComputedStyle() { return { minHeight: "36px", maxHeight: "156px" }; },
-    JarvisVoicePlayer: class { stop() {} },
+    JarvisVoicePlayer: class { stop() {} setVolume() {} },
+    JarvisSettings: class { constructor() { this.preferences = { send_shortcut: sendShortcut }; } async initialize() {} },
   };
   vm.runInNewContext(source, {
     window, document, URLSearchParams, crypto: { randomUUID }, Blob, File,
@@ -476,4 +477,20 @@ test("image admission failure explains actual memory and keeps technical details
   assert.match(rendered, /было 6\.5 ГиБ/);
   assert.match(rendered, /generate_image: не выполнено/);
   assert.match(rendered, /out_of_memory/);
+});
+
+test("Ctrl+Enter preference leaves Enter for newlines and preserves composition guards", async () => {
+  const f = fixture({ sendShortcut: "ctrl_enter" });
+  await settle();
+  let submitted = 0;
+  f.get("send-form").requestSubmit = () => { submitted += 1; };
+  const key = f.get("message-input").handlers.keydown;
+  const event = overrides => ({ key: "Enter", preventDefault() {}, ...overrides });
+  key(event({}));
+  key(event({ shiftKey: true, ctrlKey: true }));
+  key(event({ ctrlKey: true, isComposing: true }));
+  key(event({ ctrlKey: true, altKey: true }));
+  assert.equal(submitted, 0);
+  key(event({ ctrlKey: true }));
+  assert.equal(submitted, 1);
 });

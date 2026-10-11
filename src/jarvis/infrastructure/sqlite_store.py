@@ -9,6 +9,7 @@ import threading
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from functools import wraps
 from importlib import resources
@@ -24,6 +25,7 @@ from jarvis.domain.jobs import (
     JobStep,
     same_profile_identity,
 )
+from jarvis.domain.preferences import Preferences
 from jarvis.domain.retrieval import Document, Memory, RetrievalHit, RetrievalRoot
 from jarvis.domain.tools import (
     Approval,
@@ -245,6 +247,7 @@ class SqliteStore:
             (7, "007_retrieval.sql"),
             (8, "008_tool_acknowledgements.sql"),
             (9, "009_conversation_pins.sql"),
+            (10, "010_preferences.sql"),
         ):
             script = (
                 resources.files("jarvis")
@@ -271,6 +274,24 @@ class SqliteStore:
             except BaseException:
                 self._conn.rollback()
                 raise
+
+    @_on_owner
+    def get_preferences(self) -> Preferences:
+        row = self._conn.execute(
+            "SELECT payload FROM app_preferences WHERE singleton=1"
+        ).fetchone()
+        return Preferences(**json.loads(row["payload"])) if row else Preferences()
+
+    @_on_owner
+    def set_preferences(self, preferences: Preferences) -> Preferences:
+        payload = json.dumps(asdict(preferences), separators=(",", ":"))
+        with self._transaction():
+            self._conn.execute(
+                "INSERT INTO app_preferences(singleton,payload) VALUES(1,?) "
+                "ON CONFLICT(singleton) DO UPDATE SET payload=excluded.payload",
+                (payload,),
+            )
+        return self.get_preferences()
 
     async def run(self, operation: Callable[[], T]) -> T:
         """Serialize database work; cancellation does not cancel its commit."""

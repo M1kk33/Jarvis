@@ -23,6 +23,7 @@ from jarvis.application.resource_manager import (
     RuntimeRouter,
 )
 from jarvis.application.retrieval import RetrievalService
+from jarvis.application.settings import SettingsService
 from jarvis.application.speech import SpeechService
 from jarvis.application.spoken import SpokenPlaybackService
 from jarvis.application.tools import ToolPolicy, ToolService
@@ -59,9 +60,6 @@ from jarvis.interfaces.cli import dispatch, parse_args
 if TYPE_CHECKING:
     from jarvis.interfaces.web_control import WebControl
 
-LOCAL_CHAT_OUTPUT_TOKENS = 2048
-
-
 def main(
     argv: list[str] | None = None,
     *,
@@ -74,6 +72,7 @@ def main(
             print(restore_backup(Path(args.backup_dir), Path(args.data_dir)))
             return 0
         with SqliteStore(Path(args.data_dir)) as store:
+            preferences = store.get_preferences()
             diagnostics = Diagnostics(store.data_dir)
             retrieval = RetrievalService(store, SafeDocumentReader(store.data_dir))
             try:
@@ -176,7 +175,7 @@ def main(
                     )
                     provider = LlamaChatProvider(
                         runtime,
-                        max_output_tokens=LOCAL_CHAT_OUTPUT_TOKENS,
+                        max_output_tokens=preferences.output_tokens,
                         request_seconds=300,
                     )
                 if args.command == "calibrate":
@@ -359,7 +358,7 @@ def main(
                     context=(
                         ContextBuilder(
                             PreflightTokenEstimator(),
-                            output_allowance=LOCAL_CHAT_OUTPUT_TOKENS,
+                            output_allowance=preferences.output_tokens,
                         )
                         if manager
                         else None
@@ -444,7 +443,18 @@ def main(
                         )
 
                     app, setup_token = create_web_app(
-                        service, runner, tool_service, args.port, speech, spoken
+                        service,
+                        runner,
+                        tool_service,
+                        args.port,
+                        speech,
+                        spoken,
+                        settings=SettingsService(
+                            store,
+                            model_name=profile.name if profile else "Тестовая модель",
+                            active_output_tokens=service.context.output_allowance,
+                            context_tokens=service.context.window,
+                        ),
                     )
                     if web_control is None:
                         print(f"Open http://127.0.0.1:{args.port}/setup")

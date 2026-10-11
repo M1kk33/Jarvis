@@ -123,13 +123,15 @@ if (setupForm) {
     inputNode.focus();
   });
   document.addEventListener("keydown", (event) => {
+    if (document.getElementById("settings-dialog").open) return;
     if (event.key === "Escape" && !activityPanel.hidden) {
       showActivity(false);
       inputNode.focus();
     }
   });
   inputNode.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
+    const sendKey = settings.preferences.send_shortcut === "ctrl_enter" ? (event.ctrlKey || event.metaKey) : !(event.ctrlKey || event.metaKey);
+    if (event.key === "Enter" && sendKey && !event.shiftKey && !event.altKey && !event.isComposing && event.keyCode !== 229) {
       event.preventDefault();
       if (!document.getElementById("send-button").disabled) document.getElementById("send-form").requestSubmit();
     }
@@ -335,6 +337,12 @@ if (setupForm) {
     },
     onActive: (active) => { stopVoiceButton.hidden = !active; },
   });
+
+  const settings = new window.JarvisSettings({ api, onApply: (preferences) => {
+    voicePlayer.setVolume(preferences.voice_volume / 100);
+    document.getElementById("send-button").title = preferences.send_shortcut === "enter" ? "Отправить (Enter)" : "Отправить (Ctrl + Enter)";
+    resizeInput();
+  } });
 
   async function refreshConversation() {
     const generation = ++messageRefreshGeneration;
@@ -820,11 +828,12 @@ if (setupForm) {
   });
   stopVoiceButton.addEventListener("click", () => voicePlayer.stop());
 
-  api("/api/session").then((session) => {
+  api("/api/session").then(async (session) => {
     state.csrf = session.csrf_token;
     state.spokenEnabled = session.spoken_enabled;
     speechControls.hidden = !session.speech_enabled;
     visionControls.hidden = !session.vision_enabled;
+    await settings.initialize(session);
     return refreshAll();
   }).catch((error) => say(error.message));
 }

@@ -170,12 +170,26 @@ internal sealed partial class MainWindow : Form
         core.Settings.AreBrowserAcceleratorKeysEnabled = false;
         core.Settings.IsStatusBarEnabled = false;
         core.Settings.AreHostObjectsAllowed = false;
-        core.Settings.IsWebMessageEnabled = false;
+        core.Settings.IsWebMessageEnabled = true;
         core.Settings.IsNonClientRegionSupportEnabled = true;
         core.Settings.IsZoomControlEnabled = false;
-        // A host-owned style marker only; no page-to-native command bridge.
-        await core.AddScriptToExecuteOnDocumentCreatedAsync("document.addEventListener('DOMContentLoaded',()=>document.documentElement.classList.add('desktop-window'),{once:true})");
-        core.Profile.PreferredColorScheme = CoreWebView2PreferredColorScheme.Dark;
+        // Only the two fixed chrome palettes are accepted from the ready root page.
+        await core.AddScriptToExecuteOnDocumentCreatedAsync("""
+            document.addEventListener('DOMContentLoaded',()=>{
+              const root=document.documentElement;
+              root.classList.add('desktop-window');
+              const notify=()=>window.chrome.webview.postMessage(root.dataset.theme==='light'?'jarvis:theme:light':'jarvis:theme:dark');
+              new MutationObserver(notify).observe(root,{attributes:true,attributeFilter:['data-theme']});
+              notify();
+            },{once:true});
+            """);
+        core.Profile.PreferredColorScheme = CoreWebView2PreferredColorScheme.Auto;
+        core.WebMessageReceived += (_, e) =>
+        {
+            if (stopping || !ready || e.Source != origin + "/" || core.Source != origin + "/") return;
+            if (e.WebMessageAsJson == "\"jarvis:theme:light\"") ApplyWindowTheme(true);
+            else if (e.WebMessageAsJson == "\"jarvis:theme:dark\"") ApplyWindowTheme(false);
+        };
         core.NavigationStarting += (_, e) =>
         {
             e.Cancel = stopping || !Trusted(e.Uri);
@@ -197,6 +211,7 @@ internal sealed partial class MainWindow : Form
             if (!e.IsSuccess) { await FailureAsync("NavigationFailed"); return; }
             if (new Uri(core.Source).AbsolutePath != "/") return;
             ready = true;
+            await core.ExecuteScriptAsync("window.chrome.webview.postMessage(document.documentElement.dataset.theme==='light'?'jarvis:theme:light':'jarvis:theme:dark')");
             landing.Visible = false;
             LayoutWindowChrome();
             if (options.SmokeOutput is not null) await SmokeAsync();
@@ -372,6 +387,7 @@ internal sealed partial class MainWindow : Form
         try
         {
             await VerifyWindowChromeAsync();
+            await VerifySettingsThemeAsync();
             // A fixed integration scenario; there is no arbitrary page-to-native API.
             var result = await browser!.CoreWebView2.ExecuteScriptAsync("""
                 (async()=>{const s=await (await fetch('/api/session')).json();

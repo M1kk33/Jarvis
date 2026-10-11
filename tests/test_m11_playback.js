@@ -20,6 +20,7 @@ class FakeContext {
     FakeContext.instances.push(this);
   }
   async resume() {}
+  createGain() { this.gain = { gain: { value: 1 }, connect() {} }; return this.gain; }
   async decodeAudioData(data) { return data; }
   createBufferSource() {
     const node = {
@@ -111,4 +112,20 @@ test("a stale start response cannot resume cancelled playback", async () => {
   await task;
   assert.deepEqual(fetched, []);
   assert.deepEqual(stopped, ["/api/spoken/late-session/stop"]);
+});
+
+test("volume changes affect the active gain and the next playback without another synthesis", async () => {
+  const { player, fetched } = fixture(1);
+  player.setVolume(0.25);
+  const task = player.play("c", "t", "m");
+  const context = FakeContext.instances.at(-1);
+  await until(() => context.nodes.length === 1);
+  assert.equal(context.gain.gain.value, 0.25);
+  player.setVolume(0);
+  assert.equal(context.gain.gain.value, 0);
+  player.setVolume(2);
+  assert.equal(context.gain.gain.value, 0);
+  context.nodes[0].finish();
+  await task;
+  assert.deepEqual(fetched, [0]);
 });

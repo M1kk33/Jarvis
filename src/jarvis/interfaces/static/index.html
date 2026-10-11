@@ -7,6 +7,7 @@
   <title>Jarvis</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/voice_player.js" defer></script>
+  <script src="/static/settings.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -16,6 +17,7 @@
       <button id="new-conversation" class="new-chat" type="button"><span aria-hidden="true">＋</span> Новый диалог</button>
       <h2>Ваши диалоги</h2>
       <nav id="conversations" aria-label="Диалоги"></nav>
+      <button id="open-settings" class="settings-launch quiet" type="button" hidden><span aria-hidden="true">⚙</span> Настройки</button>
     </aside>
     <main class="chat">
       <header>
@@ -72,5 +74,46 @@
       <h3>Ход работы</h3><div id="jobs"></div>
     </aside>
   </div>
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
+    <form id="settings-form">
+      <div class="settings-heading"><h2 id="settings-title">Настройки</h2><button id="close-settings" class="icon-button" type="button" aria-label="Закрыть настройки">×</button></div>
+      <div class="settings-body">
+        <nav class="settings-tabs" aria-label="Разделы настроек">
+          <button type="button" data-settings-tab="appearance" aria-pressed="true">Интерфейс</button>
+          <button type="button" data-settings-tab="voice" aria-pressed="false">Голос</button>
+          <button type="button" data-settings-tab="model" aria-pressed="false">Модель</button>
+        </nav>
+        <div class="settings-content">
+          <fieldset id="settings-fields">
+          <section data-settings-page="appearance" aria-label="Интерфейс">
+            <h3>Внешний вид</h3>
+            <label class="setting-row" for="setting-theme"><span>Тема</span><select id="setting-theme"><option value="dark">Тёмная</option><option value="light">Светлая</option><option value="system">Как в системе</option></select></label>
+            <label class="setting-row" for="setting-accent"><span>Акцентный цвет</span><select id="setting-accent"><option value="mint">Мятный</option><option value="blue">Голубой</option><option value="violet">Лавандовый</option></select></label>
+            <label class="setting-row" for="setting-text-size"><span>Размер текста в чате</span><select id="setting-text-size"><option value="14">Обычный · 14</option><option value="16">Крупный · 16</option><option value="18">Очень крупный · 18</option></select></label>
+            <h3>Ввод сообщений</h3>
+            <label class="setting-row" for="setting-send-shortcut"><span>Отправлять через</span><select id="setting-send-shortcut"><option value="enter">Enter</option><option value="ctrl_enter">Ctrl + Enter</option></select></label>
+            <p class="setting-help">Shift + Enter всегда добавляет новую строку.</p>
+          </section>
+          <section data-settings-page="voice" aria-label="Голос" hidden>
+            <h3>Озвучивание ответов</h3>
+            <label class="setting-row" for="setting-voice-volume"><span>Громкость <output id="setting-volume-value">80%</output></span><input id="setting-voice-volume" type="range" min="0" max="100" step="5" value="80"></label>
+            <p id="setting-voice-availability" class="setting-help"></p>
+            <p class="setting-help">Озвучивание и запись включаются по нажатию кнопки в чате.</p>
+          </section>
+          <section data-settings-page="model" aria-label="Модель" hidden>
+            <h3>Подключённая модель</h3>
+            <div id="setting-model-name" class="model-name"></div>
+            <div class="setting-row"><span>Контекст</span><span id="setting-context"></span></div>
+            <label class="setting-row" for="setting-output-tokens"><span>Лимит ответа</span><select id="setting-output-tokens"><option value="512">512 токенов</option><option value="1024">1 024 токена</option><option value="2048">2 048 токенов</option></select></label>
+            <p class="setting-help">Это максимальная длина, а не требование писать длинно. Больший лимит оставляет меньше места для истории в контексте.</p>
+            <p class="setting-help">Лимит ответа применяется после перезапуска Jarvis. Контекст и модель задаются установленным профилем.</p>
+            <p id="setting-active-output" class="setting-help"></p>
+          </section>
+          </fieldset>
+        </div>
+      </div>
+      <div class="settings-footer"><p id="settings-status" role="status"></p><button id="reset-settings" class="quiet" type="button">По умолчанию</button><button id="save-settings" type="submit">Сохранить</button></div>
+    </form>
+  </dialog>
 </body>
 </html>

@@ -25,11 +25,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from jarvis.application.conversations import ConversationService
 from jarvis.application.images import validate_png
 from jarvis.application.jobs import JobRunner
+from jarvis.application.settings import SettingsService
 from jarvis.application.speech import MAX_CLIP_BYTES, SpeechService
 from jarvis.application.spoken import SpokenPlaybackService
 from jarvis.application.tools import ToolService
 from jarvis.application.vision import MAX_SCREENSHOT_BYTES, validate_screenshot
 from jarvis.domain.jobs import TERMINAL_JOBS, Job, JobStatus
+from jarvis.domain.preferences import Preferences
 from jarvis.domain.resources import ResourceError
 from jarvis.domain.speech import SpeechInvalid, SpeechUnavailable
 from jarvis.domain.tools import InvocationStatus, ToolInvocation
@@ -81,6 +83,15 @@ class _Speak(_Input):
 
 class _Empty(_Input):
     pass
+
+
+class _Preferences(_Input):
+    theme: str
+    accent: str
+    text_size: int
+    send_shortcut: str
+    voice_volume: int
+    output_tokens: int
 
 
 def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -143,6 +154,8 @@ def create_web_app(
     port: int,
     speech: SpeechService | None = None,
     spoken: SpokenPlaybackService | None = None,
+    *,
+    settings: SettingsService | None = None,
 ) -> tuple[FastAPI, str]:
     """Create an isolated session; the bootstrap binds it to 127.0.0.1 only."""
     origin = f"http://127.0.0.1:{port}"
@@ -339,7 +352,7 @@ def create_web_app(
 
     @app.get("/static/{filename}")
     async def static_file(filename: str):
-        if filename not in {"app.css", "app.js", "voice_player.js"}:
+        if filename not in {"app.css", "app.js", "voice_player.js", "settings.js"}:
             raise HTTPException(404)
         media = "text/css" if filename.endswith(".css") else "text/javascript"
         return Response(
@@ -357,7 +370,38 @@ def create_web_app(
             "speech_enabled": speech is not None,
             "spoken_enabled": spoken is not None,
             "vision_enabled": runner.vision is not None,
+            "settings_enabled": settings is not None,
         }
+
+    def settings_payload(preferences: Preferences) -> dict[str, object]:
+        assert settings is not None
+        return {
+            "preferences": asdict(preferences),
+            "model_name": settings.model_name,
+            "context_tokens": settings.context_tokens,
+            "active_output_tokens": settings.active_output_tokens,
+            "restart_required": preferences.output_tokens
+            != settings.active_output_tokens,
+        }
+
+    @app.get("/api/settings")
+    async def read_settings(request: Request):
+        authorize(request)
+        if settings is None:
+            raise HTTPException(503, "Settings are unavailable")
+        return settings_payload(await settings.read())
+
+    @app.post("/api/settings")
+    async def save_settings(request: Request):
+        authorize(request, mutate=True)
+        if settings is None:
+            raise HTTPException(503, "Settings are unavailable")
+        supplied = await _body(request, _Preferences)
+        try:
+            preferences = Preferences(**supplied.model_dump())
+        except ValueError as exc:
+            raise HTTPException(422, "Invalid preferences") from exc
+        return settings_payload(await settings.save(preferences))
 
     @app.get("/api/conversations")
     async def conversations(request: Request):

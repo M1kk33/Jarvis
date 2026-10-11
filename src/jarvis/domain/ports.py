@@ -6,6 +6,7 @@ from threading import Event
 from typing import Protocol, TypeVar, runtime_checkable
 
 from jarvis.domain.jobs import Job, JobStep
+from jarvis.domain.preferences import Preferences
 from jarvis.domain.retrieval import Document, Memory, RetrievalHit, RetrievalRoot
 from jarvis.domain.tools import Approval, ContextRecord, ToolInvocation
 from jarvis.domain.types import (
@@ -18,6 +19,12 @@ from jarvis.domain.types import (
 )
 
 T = TypeVar("T")
+
+
+class PreferencesStore(Protocol):
+    async def run(self, operation: Callable[[], T]) -> T: ...
+    def get_preferences(self) -> Preferences: ...
+    def set_preferences(self, preferences: Preferences) -> Preferences: ...
 
 
 class ChatProvider(Protocol):

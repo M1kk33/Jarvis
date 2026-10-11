@@ -9,6 +9,13 @@ class JarvisVoicePlayer {
     this.onActive = onActive;
     this.active = null;
     this.generation = 0;
+    this.volume = 0.8;
+  }
+
+  setVolume(volume) {
+    if (!Number.isFinite(volume) || volume < 0 || volume > 1) return;
+    this.volume = volume;
+    if (this.active?.gain) this.active.gain.gain.value = volume;
   }
 
   isPlaying(conversationId, turnId, messageId) {
@@ -37,7 +44,10 @@ class JarvisVoicePlayer {
     let context;
     try { context = new this.AudioContextType(); }
     catch (_) { this.onStatus("Audio playback is unavailable."); return; }
-    const active = { conversationId, turnId, messageId, context, sessionId: null, controller: null, node: null };
+    const gain = context.createGain();
+    gain.gain.value = this.volume;
+    gain.connect(context.destination);
+    const active = { conversationId, turnId, messageId, context, gain, sessionId: null, controller: null, node: null };
     const generation = ++this.generation;
     this.active = active;
     this.onActive(true);
@@ -66,7 +76,7 @@ class JarvisVoicePlayer {
           const node = context.createBufferSource();
           active.node = node;
           node.buffer = decoded;
-          node.connect(context.destination);
+          node.connect(active.gain);
           node.onended = resolve;
           this.onStatus(`Speaking ${index + 1} of ${started.chunks}…`);
           node.start();

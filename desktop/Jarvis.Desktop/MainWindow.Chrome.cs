@@ -44,6 +44,53 @@ internal sealed partial class MainWindow
     private void ToggleMaximize() => WindowState = WindowState == FormWindowState.Maximized
         ? FormWindowState.Normal : FormWindowState.Maximized;
 
+    private void ApplyWindowTheme(bool light)
+    {
+        BackColor = light ? Color.FromArgb(248, 249, 251) : Color.FromArgb(16, 18, 22);
+        ForeColor = light ? Color.FromArgb(32, 38, 47) : Color.FromArgb(230, 235, 238);
+        windowControls.BackColor = BackColor;
+        foreach (var button in new[] { minimizeWindow, maximizeWindow, closeWindow })
+        {
+            button.Light = light;
+            button.BackColor = BackColor;
+            button.ForeColor = light ? Color.FromArgb(88, 100, 117) : Color.FromArgb(187, 193, 203);
+            button.Invalidate();
+        }
+    }
+
+    private async Task VerifySettingsThemeAsync()
+    {
+        smokeStage = "settings_theme";
+        await browser!.CoreWebView2.ExecuteScriptAsync("""
+            (async()=>{
+              const s=await(await fetch('/api/session')).json();
+              const original=await(await fetch('/api/settings')).json();
+              window.__jarvisThemeOriginal=original.preferences;
+              const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':s.csrf_token},body:JSON.stringify({...original.preferences,theme:'light'})});
+              if(!r.ok)throw Error('settings');
+              document.documentElement.dataset.theme='light';
+            })()
+            """);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (BackColor != Color.FromArgb(248, 249, 251) && DateTime.UtcNow < deadline) await Task.Delay(50);
+        if (!minimizeWindow.Light || !maximizeWindow.Light || !closeWindow.Light) throw new InvalidOperationException("SettingsLightChrome");
+        await browser.CoreWebView2.ExecuteScriptAsync("window.chrome.webview.postMessage({theme:'dark'});window.chrome.webview.postMessage('arbitrary-command')");
+        await Task.Delay(100);
+        if (!closeWindow.Light) throw new InvalidOperationException("SettingsMessageBoundary");
+        await browser.CoreWebView2.ExecuteScriptAsync("""
+            (async()=>{
+              const s=await(await fetch('/api/session')).json();
+              const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':s.csrf_token},body:JSON.stringify(window.__jarvisThemeOriginal)});
+              if(!r.ok)throw Error('settings');
+              document.documentElement.dataset.theme='dark';
+            })()
+            """);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (closeWindow.Light && DateTime.UtcNow < deadline) await Task.Delay(50);
+        if (closeWindow.Light) throw new InvalidOperationException("SettingsDarkChrome");
+        smokeStage = "conversation";
+    }
+
     private void LayoutWindowChrome()
     {
         if (windowControls.IsDisposed || WindowState == FormWindowState.Minimized) return;
@@ -120,6 +167,7 @@ internal sealed partial class MainWindow
         private readonly CaptionAction action;
         private bool hovered;
         internal bool Restore;
+        internal bool Light;
 
         public CaptionButton(CaptionAction action, string label)
         {
@@ -138,10 +186,11 @@ internal sealed partial class MainWindow
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            e.Graphics.Clear(hovered ? (action == CaptionAction.Close ? Color.FromArgb(196, 43, 60) : Color.FromArgb(37, 42, 50)) : BackColor);
+            var hoverColor = Light ? Color.FromArgb(228, 233, 238) : Color.FromArgb(37, 42, 50);
+            e.Graphics.Clear(hovered ? (action == CaptionAction.Close ? Color.FromArgb(196, 43, 60) : hoverColor) : BackColor);
             float scale = DeviceDpi / 96f, size = 10 * scale;
             float x = (Width - size) / 2, y = (Height - size) / 2;
-            using var pen = new Pen(hovered ? Color.White : ForeColor, scale);
+            using var pen = new Pen(hovered && (action == CaptionAction.Close || !Light) ? Color.White : ForeColor, scale);
             e.Graphics.SmoothingMode = SmoothingMode.None;
             if (action == CaptionAction.Minimize) e.Graphics.DrawLine(pen, x, y + size / 2, x + size, y + size / 2);
             else if (action == CaptionAction.Close)
@@ -152,7 +201,7 @@ internal sealed partial class MainWindow
             else if (Restore)
             {
                 e.Graphics.DrawRectangle(pen, x + 3 * scale, y, size - 3 * scale, size - 3 * scale);
-                using var fill = new SolidBrush(hovered ? Color.FromArgb(37, 42, 50) : BackColor);
+                using var fill = new SolidBrush(hovered ? hoverColor : BackColor);
                 e.Graphics.FillRectangle(fill, x, y + 3 * scale, size - 3 * scale, size - 3 * scale);
                 e.Graphics.DrawRectangle(pen, x, y + 3 * scale, size - 3 * scale, size - 3 * scale);
             }
