@@ -21,7 +21,7 @@ function fixture({ vision = false, decode, history, loadHistory, conversations: 
   }
   const elements = new Map();
   const get = (id) => {
-    if (id === "setup-form") return null;
+    if (["setup-form", "refresh", "toggle-activity", "approval-count"].includes(id)) return null;
     if (!elements.has(id)) elements.set(id, new Element());
     return elements.get(id);
   };
@@ -45,8 +45,9 @@ function fixture({ vision = false, decode, history, loadHistory, conversations: 
     }
     return el;
   }, createElementNS() { return new Element(); }, addEventListener(name, handler) { handlers[name] = handler; } };
+  const windowHandlers = {};
   const window = {
-    location: { hash: "", pathname: "/", search: "" }, addEventListener() {},
+    location: { hash: "", pathname: "/", search: "" }, addEventListener(name, handler) { windowHandlers[name] = handler; },
     getComputedStyle() { return { minHeight: "36px", maxHeight: "156px" }; },
     JarvisVoicePlayer: class { stop() {} },
   };
@@ -93,7 +94,7 @@ function fixture({ vision = false, decode, history, loadHistory, conversations: 
       return { ok, status: ok ? 200 : 503, json: async () => value };
     },
   });
-  return { get, requests, handlers, canvases, revoked, sources, activeElement() { return document.activeElement; }, failPin(value) { failPin = value; }, setJobs(value) { jobs = value; }, setApprovals(value) { approvals = value; }, failSend(value) { failSend = value; } };
+  return { get, requests, handlers, canvases, revoked, sources, focusApp() { return windowHandlers.focus(); }, activeElement() { return document.activeElement; }, failPin(value) { failPin = value; }, setJobs(value) { jobs = value; }, setApprovals(value) { approvals = value; }, failSend(value) { failSend = value; } };
 }
 const settle = () => new Promise(setImmediate);
 
@@ -153,7 +154,7 @@ test("new conversations appear at the top and reveal it without resetting older-
   assert.equal(nav.scrollTop, 0);
   assert.deepEqual(nav.children.map((row) => row.children[0].textContent), ["Newest", "Recent", "Old"]);
   assert.match(nav.children[0].className, /selected/);
-  await f.get("refresh").handlers.click();
+  await f.focusApp();
   assert.equal(nav.children[0].children[0].textContent, "Newest");
 });
 
@@ -234,7 +235,7 @@ test("streaming reply stays in assistant flow through refresh, completion and st
   messages.scrollTop = 100;
   await progress("Live partial with more text");
   assert.equal(messages.scrollTop, 100, "reading older content must not be interrupted");
-  await f.get("refresh").handlers.click();
+  await f.focusApp();
   assert.equal(messages.children.length, 2, "refresh must not duplicate the draft inside the user card");
   assert.equal(messages.children[0].children.length, 3);
   assert.equal(partial().children[1].textContent, "Live partial with more text", "older persisted checkpoint must not replace live text");
@@ -286,7 +287,7 @@ test("a delayed conversation fetch cannot put a draft back after terminal refres
   f.get("message-input").value = "Story";
   await f.get("send-form").requestSubmit();
   defer = true;
-  const older = f.get("refresh").handlers.click();
+  const older = f.focusApp();
   await settle();
   history.turns[0].status = "complete";
   history.messages.push({ id: "assistant-1", turn_id: "turn-1", role: "assistant", text: "Committed reply" });
@@ -336,13 +337,40 @@ test("new uncertain outcomes open attention panel; closing it does not acknowled
   const f = fixture();
   await settle();
   f.setApprovals({ approvals: [], uncertain_actions: [{ id: "uncertain-1", name: "generate_image", target_identity: "local", arguments_json: "{}" }] });
-  await f.get("refresh").handlers.click();
+  await f.focusApp();
   assert.equal(f.get("activity-panel").hidden, false);
-  assert.equal(f.get("approval-count").textContent, "1");
+  assert.equal(f.get("attention-notice").hidden, true);
   f.get("close-activity").handlers.click();
-  await f.get("refresh").handlers.click();
+  await f.focusApp();
   assert.equal(f.get("activity-panel").hidden, true);
-  assert.equal(f.get("approval-count").hidden, false);
+  assert.equal(f.get("attention-notice").hidden, false);
+  assert.equal(f.get("attention-notice").textContent, "Требуют внимания: 1");
+  f.get("attention-notice").handlers.click();
+  assert.equal(f.get("activity-panel").hidden, false);
+  assert.equal(f.get("attention-notice").hidden, true);
+  assert.equal(f.requests.filter((r) => r.method === "POST").length, 0);
+});
+
+test("task status opens its controls without permanent header buttons", async () => {
+  const f = fixture({ conversations: [{ id: "saved", title: "Saved" }], history: {
+    messages: [{ id: "user-1", turn_id: "turn-1", role: "user", text: "Explain" }],
+    turns: [{ id: "turn-1", status: "pending" }],
+  } });
+  await settle();
+  assert.equal(f.get("refresh"), null);
+  assert.equal(f.get("toggle-activity"), null);
+  assert.equal(f.get("attention-notice").hidden, true);
+  const status = f.get("messages").children[0].children[2];
+  assert.equal(status.title, "Показать действия по запросу");
+  status.handlers.click();
+  assert.equal(f.get("activity-panel").hidden, false);
+  f.get("close-activity").handlers.click();
+  assert.equal(f.activeElement(), f.get("message-input"));
+  assert.equal(f.get("attention-notice").hidden, true);
+  status.handlers.click();
+  f.handlers.keydown({ key: "Escape" });
+  assert.equal(f.get("activity-panel").hidden, true);
+  assert.equal(f.get("attention-notice").hidden, true);
   assert.equal(f.requests.filter((r) => r.method === "POST").length, 0);
 });
 
@@ -369,7 +397,7 @@ test("new conversation stays empty through refresh and gets its first message as
   f.get("message-input").value = "First conversation";
   await f.get("send-form").requestSubmit();
   await f.get("new-conversation").handlers.click();
-  await f.get("refresh").handlers.click();
+  await f.focusApp();
   assert.equal(f.get("conversation-title").textContent, "Новый диалог");
   assert.equal(f.requests.filter((r) => r.url === "/api/conversations" && r.method === "POST").length, 1);
   f.get("message-input").value = "Second conversation";

@@ -22,13 +22,12 @@
         <div class="heading"><h1 id="conversation-title">Новый диалог</h1></div>
         <div class="header-actions">
           <button id="stop-voice" type="button" class="quiet" hidden>Остановить голос</button>
-          <button id="refresh" type="button" class="icon-button" title="Обновить" aria-label="Обновить">↻</button>
-          <button id="toggle-activity" type="button" class="quiet" aria-expanded="false" aria-controls="activity-panel">Действия <span id="approval-count" class="count" hidden>0</span></button>
         </div>
       </header>
       <div class="voice-line"><span id="voice-status" role="status"></span></div>
       <div id="messages" class="messages" aria-live="polite"></div>
       <div class="composer-wrap">
+        <button id="attention-notice" class="attention-notice quiet" type="button" aria-controls="activity-panel" aria-expanded="false" hidden></button>
         <form id="send-form" class="composer">
           <label for="message-input" class="sr-only">Сообщение</label>
           <div class="composer-row">

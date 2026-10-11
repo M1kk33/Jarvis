@@ -82,7 +82,7 @@ if (setupForm) {
   const attachmentPreview = document.getElementById("attachment-preview");
   const sendForm = document.getElementById("send-form");
   const activityPanel = document.getElementById("activity-panel");
-  const activityToggle = document.getElementById("toggle-activity");
+  const attentionNotice = document.getElementById("attention-notice");
   let attentionIds = new Set();
 
   function resizeInput() {
@@ -114,17 +114,18 @@ if (setupForm) {
 
   function showActivity(visible) {
     activityPanel.hidden = !visible;
-    activityToggle.setAttribute("aria-expanded", String(visible));
+    attentionNotice.hidden = visible || !attentionIds.size;
+    attentionNotice.setAttribute("aria-expanded", String(visible));
   }
-  activityToggle.addEventListener("click", () => showActivity(activityPanel.hidden));
+  attentionNotice.addEventListener("click", () => showActivity(true));
   document.getElementById("close-activity").addEventListener("click", () => {
     showActivity(false);
-    activityToggle.focus();
+    inputNode.focus();
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !activityPanel.hidden) {
       showActivity(false);
-      activityToggle.focus();
+      inputNode.focus();
     }
   });
   inputNode.addEventListener("keydown", (event) => {
@@ -411,8 +412,16 @@ if (setupForm) {
         const turn = turns.get(message.turn_id);
         if (turn && turn.status !== "complete") {
           const job = jobUpdates.get(turn.id);
-          const node = line(card, `Состояние: ${job ? jobLabel(job) : turn.error_code === "output_limit" ? "Достигнут лимит длины ответа" : statusLabel(turn.status)}`, "subtle");
+          const details = button("", () => showActivity(true), true);
+          details.className = "turn-status";
+          details.title = "Показать действия по запросу";
+          details.setAttribute("aria-controls", "activity-panel");
+          const node = document.createElement("span");
+          node.className = "subtle";
+          node.textContent = `Состояние: ${job ? jobLabel(job) : turn.error_code === "output_limit" ? "Достигнут лимит длины ответа" : statusLabel(turn.status)}`;
           node.setAttribute("role", "status");
+          details.append(node);
+          card.append(details);
           turnStatusNodes.set(turn.id, node);
         }
         for (const artifact of artifacts.get(message.turn_id) || []) {
@@ -581,11 +590,10 @@ if (setupForm) {
       ...(data.uncertain_actions || []).map((item) => item.id),
       ...(data.uncertain_files || []).map((item) => item.invocation_id),
     ]);
-    const badge = document.getElementById("approval-count");
-    badge.textContent = String(nextAttention.size);
-    badge.hidden = !nextAttention.size;
-    if ([...nextAttention].some((id) => !attentionIds.has(id))) showActivity(true);
+    const newAttention = [...nextAttention].some((id) => !attentionIds.has(id));
     attentionIds = nextAttention;
+    attentionNotice.textContent = `Требуют внимания: ${attentionIds.size}`;
+    showActivity(newAttention || !activityPanel.hidden);
     if (!visible.length && !(data.uncertain_actions || []).length && !(data.uncertain_files || []).length) line(approvalsNode, "Всё спокойно. Подтверждения не требуются.", "empty");
     for (const item of visible) {
       const card = document.createElement("div");
@@ -681,7 +689,9 @@ if (setupForm) {
       inputNode.focus();
     } catch (error) { say(error.message); }
   });
-  document.getElementById("refresh").addEventListener("click", () => refreshAll().catch((error) => say(error.message)));
+  window.addEventListener("focus", () => {
+    if (state.csrf) return refreshAll().catch((error) => say(error.message));
+  });
   document.getElementById("send-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (attachmentPending) { say("Дождитесь подготовки скриншота."); return; }

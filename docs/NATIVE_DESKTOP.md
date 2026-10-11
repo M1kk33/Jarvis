@@ -147,6 +147,14 @@ The fixed native smoke scenario always creates its own temporary data directory,
 
 - Installed 0.3.12 (MSI exit 0; file version 0.3.12.0). Installed native smoke passed, including synthetic microphone capture, window controls and verified tree exit. The full-window screenshot was inspected. Real user history counts were unchanged and SQLite quick check passed; the existing application shortcut was reopened. Installer: `dist/Jarvis-0.3.12-preview.msi`.
 
+### 0.3.13 cleaner conversation header
+
+- Removed the permanent refresh and Actions buttons from the header. Returning focus to the window refreshes the current state without clearing the composer; existing SSE updates remain in place. No polling or dependency was added. Native smoke refreshes through the same window-focus event.
+- Incomplete request status is a keyboard-accessible contextual control for the existing task panel, retaining cancel/resume access. New required confirmations still open the panel automatically. Closing it shows a temporary attention control above the composer only while an unresolved item remains, so it can be reopened. Closing/Escape returns focus to the input; neither opening nor closing approves, acknowledges, cancels or resumes anything.
+- **347 Python tests passed, 3 hardware opt-ins skipped; 26 JavaScript tests passed**. Ruff, Release publish and portable native smoke passed. An isolated browser run verified the packaged interface against the real API/SSE at 850×620, 1280×820 and 1920×1032: absent header buttons, contextual task access, automatic attention opening/reopening, zero implicit mutation requests, focus refresh, stable streaming/final geometry and composer size. Idle/attention screenshots were inspected.
+
+- Installed 0.3.13 (MSI exit 0; file version 0.3.13.0). Installed native smoke and verified child-tree exit passed; the full-window screenshot was inspected. User history counts stayed unchanged and SQLite quick check passed. Reopened the original shortcut. Installer: `dist/Jarvis-0.3.13-preview.msi`.
+
 ## Remaining before a complete out-of-box release
 
 - The offline full archive is implemented. Online delivery, resumable setup, separate capability packs and component upgrades are not implemented. The app-only MSI requires either that archive or an existing configured data folder.

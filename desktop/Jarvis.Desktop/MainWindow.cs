@@ -396,7 +396,7 @@ internal sealed partial class MainWindow : Form
             }
             if (!complete) throw new InvalidOperationException("SmokeIncomplete");
             await VerifyMicrophoneAsync();
-            await browser.CoreWebView2.ExecuteScriptAsync("document.getElementById('refresh').click()");
+            await browser.CoreWebView2.ExecuteScriptAsync("window.dispatchEvent(new Event('focus'))");
             await Task.Delay(300);
             using var screenshot = File.Create(Path.ChangeExtension(options.SmokeOutput!, ".png"));
             await browser.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, screenshot);

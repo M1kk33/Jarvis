@@ -78,6 +78,9 @@ h3 { margin: 2rem 0 1rem; }
 .message.user { background: #20272a; border: 1px solid #303b3c; }
 .message .role { font-size: 11px; font-weight: 600; color: var(--accent); letter-spacing: .03em; margin-bottom: 9px; }
 .message.user .role { color: #a7b3ba; }
+.message .turn-status { display: block; padding: 0; border: 0; background: transparent; text-align: left; font-weight: 400; }
+.message .turn-status:hover { color: var(--accent); background: transparent; }
+.attention-notice { display: block; margin: 0 auto 8px; padding: 6px 12px; font-size: 12px; color: var(--accent); }
 .message pre, .card pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 0; }
 .message details { font-size: 12px; color: var(--muted); padding: 8px 0; }
 .generated-image { display: block; width: min(100%, 512px); height: auto; margin: 12px 0; border-radius: 10px; }
