@@ -9,6 +9,20 @@ internal sealed partial class MainWindow
     private readonly CaptionButton minimizeWindow = new(CaptionAction.Minimize, "Свернуть");
     private readonly CaptionButton maximizeWindow = new(CaptionAction.Maximize, "Развернуть");
     private readonly CaptionButton closeWindow = new(CaptionAction.Close, "Закрыть");
+    private const int DwmWindowCornerPreference = 33, DwmRound = 2;
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        // A full client area disables Windows' automatic corner heuristics.
+        // Opt in per HWND; DWM handles maximized/snapped windows and DPI itself.
+        // Older Windows keeps its normal square frame without a custom region.
+        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+        {
+            int preference = DwmRound;
+            _ = DwmSetWindowAttribute(Handle, DwmWindowCornerPreference, ref preference, sizeof(int));
+        }
+    }
 
     private void InitializeWindowChrome()
     {
@@ -152,6 +166,7 @@ internal sealed partial class MainWindow
 
     private async Task VerifyWindowChromeAsync()
     {
+        VerifyWindowCorners();
         smokeStage = "caption_removed";
         if (RectangleToScreen(ClientRectangle) != Bounds) throw new InvalidOperationException("SystemCaptionVisible");
         smokeStage = "resize_edges";
@@ -189,6 +204,7 @@ internal sealed partial class MainWindow
         smokeStage = "restore_from_taskbar";
         if (Bounds != original || !windowControls.Visible || windowControls.Bottom > browser!.Height)
             throw new InvalidOperationException("RestoreFromTaskbar");
+        VerifyWindowCorners();
         var dragStyle = await browser.CoreWebView2.ExecuteScriptAsync("getComputedStyle(document.querySelector('.chat header')).getPropertyValue('app-region')==='drag' && getComputedStyle(document.querySelector('.header-actions')).getPropertyValue('app-region')==='no-drag'");
         smokeStage = "web_drag_regions";
         if (dragStyle != "true" || !browser.CoreWebView2.Settings.IsNonClientRegionSupportEnabled)
@@ -196,6 +212,20 @@ internal sealed partial class MainWindow
         windowChromeTested = true;
         smokeStage = "conversation";
     }
+
+    private void VerifyWindowCorners()
+    {
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) return;
+        smokeStage = "system_corner_preference";
+        if (DwmGetWindowAttribute(Handle, DwmWindowCornerPreference, out int preference, sizeof(int)) < 0
+            || preference != DwmRound || Region is not null || AllowTransparency)
+            throw new InvalidOperationException("SystemCornerPreference");
+    }
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(nint window, int attribute, ref int value, int size);
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(nint window, int attribute, out int value, int size);
 
     [DllImport("user32.dll")]
     private static extern nint SendMessageW(nint window, uint message, nint wParam, nint lParam);

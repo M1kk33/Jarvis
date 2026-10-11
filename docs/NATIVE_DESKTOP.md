@@ -1,4 +1,4 @@
-# Native Windows desktop — installed 0.3.5 preview
+# Native Windows desktop — installed 0.3.6 preview
 
 Date: 11 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
 
@@ -100,6 +100,12 @@ The fixed native smoke scenario always creates its own temporary data directory,
 - Regression tests cover restart/backup persistence, idempotent pin/unpin, creation order, missing records, rollback, v8 migration preserving complete/failed/incomplete history, failed-DDL rollback and retry, cancelled awaits, API access/input boundaries, and keeping draft/selection/focus intact. Older sidebar fetches cannot overwrite a newer refresh.
 - **340 Python tests passed, 3 hardware opt-ins skipped; 17 JavaScript tests passed**. Ruff, mypy and Release publish passed. An isolated Chromium run exercised the packaged interface against its real API: mouse pin, keyboard unpin, reload persistence, newly created ordinary chats below pins, and unchanged draft/selection, with zero provider calls. Hover/pinned screenshots were inspected.
 - Built and installed `dist/Jarvis-0.3.5-preview.msi` over 0.3.4 (exit 0; installed file version 0.3.5.0). Installed native-host smoke passed with verified tree exit. Before upgrading, a consistent SQLite snapshot was saved outside the distribution under ignored `run/pre-035-conversation-pins.db`. The existing idle application was closed normally and reopened; migration 009 completed with unchanged conversation/turn/message counts and a successful SQLite quick check.
+
+### 0.3.6 system-rounded window corners
+
+- The custom frame now opts into Windows 11's native rounded corners with `DWMWA_WINDOW_CORNER_PREFERENCE` / `DWMWCP_ROUND` whenever its HWND is created, including handle recreation. Removing the non-client caption had disabled automatic rounding heuristics. DWM owns clipping, border, shadow and DPI handling; there is no window region, transparency layer, timer or new dependency. Older Windows retains its standard frame behavior.
+- Maximized and snapped windows follow system policy, including square corners. See Microsoft's [rounded-corner guidance](https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/ui/apply-rounded-corners). The native smoke reads the DWM preference before and after maximize/restore and minimize/restore, alongside the existing eight resize handles, work-area bounds, caption controls, chat, microphone refusal and full process-tree cleanup checks. A compositor screenshot visibly confirmed all four rounded corners.
+- **340 Python tests passed, 3 hardware opt-ins skipped; 17 JavaScript tests passed**. Release publish passed. Built and installed `dist/Jarvis-0.3.6-preview.msi` over 0.3.5 (MSI exit 0; installed file version 0.3.6.0). Installed native smoke and visual inspection passed, including verified tree exit. The idle application was closed normally and reopened using its existing shortcut; real history counts were unchanged and SQLite quick check passed. The change is confined to the native window, with no database migration or inference change.
 
 ## Remaining before a complete out-of-box release
 
