@@ -251,6 +251,103 @@ test("streaming reply stays in assistant flow through refresh, completion and st
   assert.equal(partial().children[1].textContent, "Final story");
 });
 
+test("generated images belong to Jarvis while uploads stay with their user's turn", async () => {
+  const generated = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const uploaded = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const unavailable = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const history = {
+    messages: [
+      { id: "user-1", turn_id: "turn-1", role: "user", text: "Draw it" },
+      { id: "assistant-1", turn_id: "turn-1", role: "assistant", text: "Here it is" },
+      { id: "user-2", turn_id: "turn-2", role: "user", text: "Describe my screenshot" },
+      { id: "assistant-2", turn_id: "turn-2", role: "assistant", text: "Description" },
+    ],
+    turns: [{ id: "turn-1", status: "complete" }, { id: "turn-2", status: "complete" }],
+    artifacts: [
+      { id: generated, turn_id: "turn-1", kind: "image/png", status: "available" },
+      { id: uploaded, turn_id: "turn-2", kind: "screenshot/png", status: "available" },
+      { id: unavailable, turn_id: "turn-1", kind: "image/png", status: "unavailable" },
+      { id: "../../invalid", turn_id: "turn-1", kind: "image/png", status: "available" },
+      { id: uploaded, turn_id: "turn-1", kind: "unsupported", status: "available" },
+    ],
+  };
+  const f = fixture({ conversations: [{ id: "saved", title: "Saved" }], history });
+  await settle();
+  const images = card => card.children.filter(node => node.className === "generated-image");
+  const links = card => card.children.filter(node => node.href);
+  for (let refresh = 0; refresh < 2; refresh++) {
+    const cards = f.get("messages").children;
+    assert.equal(cards.length, 4);
+    assert.equal(images(cards[0]).length, 0);
+    assert.equal(cards[1].children[0].textContent, "Jarvis");
+    assert.deepEqual(images(cards[1]).map(node => node.src), [`/api/artifacts/${generated}/preview`]);
+    assert.deepEqual(links(cards[1]).map(node => node.href), [`/api/artifacts/${generated}`]);
+    assert.ok(cards[1].children.some(node => node.textContent.includes(unavailable)));
+    assert.equal(cards[2].children[0].textContent, "Вы");
+    assert.deepEqual(images(cards[2]).map(node => node.src), [`/api/artifacts/${uploaded}/preview`]);
+    assert.equal(images(cards[2])[0].alt, "Исходный скриншот");
+    assert.equal(images(cards[3]).length, 0);
+    await f.focusApp();
+  }
+  assert.equal(f.requests.some(request => request.method === "POST"), false);
+});
+
+for (const status of ["pending", "generating", "failed", "cancelled", "interrupted"]) {
+  test(`a committed image without reply text stays under Jarvis for a ${status} turn`, async () => {
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const history = {
+      messages: [{ id: "user-1", turn_id: "turn-1", role: "user", text: "Draw it" }],
+      turns: [{ id: "turn-1", status }],
+      artifacts: [{ id, turn_id: "turn-1", kind: "image/png", status: "available" }],
+    };
+    const f = fixture({ history });
+    await settle();
+    f.get("message-input").value = "Draw it";
+    await f.get("send-form").requestSubmit();
+    const assertImage = () => {
+      const cards = f.get("messages").children;
+      assert.equal(cards.length, 2);
+      assert.equal(cards[0].children.some(node => node.src), false);
+      assert.equal(cards[1].className, "message assistant");
+      assert.equal(cards[1].children[0].textContent, "Jarvis");
+      assert.equal(cards[1].hidden, false);
+      assert.equal(cards[1].children.filter(node => node.src).length, 1);
+    };
+    assertImage();
+    const source = f.sources.at(-1);
+    await source.handlers.progress({ data: JSON.stringify({
+      job: { id: "job-1", conversation_id: "conversation-1", turn_id: "turn-1", status: "running", progress: "generating" }, draft: "",
+    }) });
+    assertImage();
+    await f.focusApp();
+    assertImage();
+    history.turns[0].status = "complete";
+    history.messages.push({ id: "assistant-1", turn_id: "turn-1", role: "assistant", text: "Here it is" });
+    await source.handlers.progress({ data: JSON.stringify({
+      job: { id: "job-1", conversation_id: "conversation-1", turn_id: "turn-1", status: "succeeded" }, draft: "Here it is",
+    }) });
+    const cards = f.get("messages").children;
+    assert.equal(cards.length, 2);
+    assert.equal(cards[1].children[1].textContent, "Here it is");
+    assert.equal(cards[1].children.filter(node => node.src).length, 1);
+  });
+}
+
+test("an unavailable generated image keeps a Jarvis placeholder visible without text", async () => {
+  const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const f = fixture({ conversations: [{ id: "saved", title: "Saved" }], history: {
+    messages: [{ id: "user-1", turn_id: "turn-1", role: "user", text: "Draw it" }],
+    turns: [{ id: "turn-1", status: "failed" }],
+    artifacts: [{ id, turn_id: "turn-1", kind: "image/png", status: "unavailable" }],
+  } });
+  await settle();
+  const card = f.get("messages").children[1];
+  assert.equal(card.children[0].textContent, "Jarvis");
+  assert.equal(card.hidden, false);
+  assert.ok(card.children.some(node => node.textContent.includes(id)));
+  assert.equal(card.children.some(node => node.src || node.href), false);
+});
+
 for (const status of ["failed", "cancelled", "interrupted"]) {
   test(`restored ${status} draft remains an assistant message beside its turn`, async () => {
     const f = fixture({ conversations: [{ id: "saved", title: "Saved" }], history: {

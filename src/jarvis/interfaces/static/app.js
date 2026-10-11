@@ -378,6 +378,28 @@ if (setupForm) {
       if (!artifacts.has(artifact.turn_id)) artifacts.set(artifact.turn_id, []);
       artifacts.get(artifact.turn_id).push(artifact);
     }
+    function appendArtifacts(card, turnId, kind) {
+      let rendered = false;
+      for (const artifact of artifacts.get(turnId) || []) {
+        if (!/^[0-9a-f-]{36}$/.test(artifact.id) || artifact.kind !== kind) continue;
+        rendered = true;
+        if (artifact.status !== "available") {
+          line(card, `Image ${artifact.id} is unavailable`, "subtle");
+          continue;
+        }
+        const preview = document.createElement("img");
+        preview.className = "generated-image";
+        preview.alt = kind === "screenshot/png" ? "Исходный скриншот" : `Generated image ${artifact.id}`;
+        preview.loading = "lazy";
+        preview.src = `/api/artifacts/${artifact.id}/preview`;
+        card.append(preview);
+        const download = document.createElement("a");
+        download.href = `/api/artifacts/${artifact.id}`;
+        download.textContent = kind === "screenshot/png" ? "Скачать исходный скриншот" : `Скачать изображение ${artifact.id}`;
+        card.append(download);
+      }
+      return rendered;
+    }
     for (const message of data.messages) {
       const card = document.createElement("article");
       card.className = `message ${message.role}`;
@@ -432,24 +454,9 @@ if (setupForm) {
           card.append(details);
           turnStatusNodes.set(turn.id, node);
         }
-        for (const artifact of artifacts.get(message.turn_id) || []) {
-          if (!/^[0-9a-f-]{36}$/.test(artifact.id)
-              || !["image/png", "screenshot/png"].includes(artifact.kind)) continue;
-          if (artifact.status !== "available") {
-            line(card, `Image ${artifact.id} is unavailable`, "subtle");
-            continue;
-          }
-          const preview = document.createElement("img");
-          preview.className = "generated-image";
-          preview.alt = artifact.kind === "screenshot/png" ? "Исходный скриншот" : `Generated image ${artifact.id}`;
-          preview.loading = "lazy";
-          preview.src = `/api/artifacts/${artifact.id}/preview`;
-          card.append(preview);
-          const download = document.createElement("a");
-          download.href = `/api/artifacts/${artifact.id}`;
-          download.textContent = artifact.kind === "screenshot/png" ? "Скачать исходный скриншот" : `Скачать изображение ${artifact.id}`;
-          card.append(download);
-        }
+        appendArtifacts(card, message.turn_id, "screenshot/png");
+      } else if (message.role === "assistant") {
+        appendArtifacts(card, message.turn_id, "image/png");
       }
       messagesNode.append(card);
       const turn = turns.get(message.turn_id);
@@ -464,8 +471,10 @@ if (setupForm) {
         if (turn.error_code === "output_limit") {
           line(partial, "Ответ остановлен на лимите длины. Попросите более краткий ответ или разбейте вопрос на части.", "subtle");
         }
-        partial.hidden = !content.textContent;
-        draftNodes.set(turn.id, { card: partial, content });
+        // A committed image belongs to Jarvis even before text arrives or after failure.
+        const hasArtifacts = appendArtifacts(partial, turn.id, "image/png");
+        partial.hidden = !content.textContent && !hasArtifacts;
+        draftNodes.set(turn.id, { card: partial, content, hasArtifacts });
         messagesNode.append(partial);
       }
     }
@@ -544,7 +553,7 @@ if (setupForm) {
         if (draft) {
           const follow = messagesNode.scrollHeight - messagesNode.clientHeight - messagesNode.scrollTop < 80;
           draft.content.textContent = snapshot.draft;
-          draft.card.hidden = !snapshot.draft;
+          draft.card.hidden = !snapshot.draft && !draft.hasArtifacts;
           if (follow) messagesNode.scrollTop = messagesNode.scrollHeight;
         }
       }
