@@ -50,6 +50,7 @@ if (setupForm) {
   const jobUpdates = new Map();
   const turnStatusNodes = new Map();
   const conversationsNode = document.getElementById("conversations");
+  let conversationRefreshGeneration = 0;
   const messagesNode = document.getElementById("messages");
   const draftNode = document.getElementById("draft");
   const jobsNode = document.getElementById("jobs");
@@ -404,11 +405,16 @@ if (setupForm) {
     messagesNode.scrollTop = messagesNode.scrollHeight;
   }
 
-  async function refreshConversations() {
+  async function refreshConversations(focusPin = null, focusId = null) {
+    const generation = ++conversationRefreshGeneration;
     const data = await api("/api/conversations");
+    if (generation !== conversationRefreshGeneration) return;
+    const restorePinFocus = focusPin && document.activeElement === focusPin;
     conversationsNode.replaceChildren();
     if (!state.selected && !state.fresh && data.conversations.length) state.selected = data.conversations[0].id;
     for (const conversation of data.conversations) {
+      const row = document.createElement("div");
+      row.className = "conversation-row" + (conversation.pinned ? " pinned" : "");
       const item = button(conversation.title, async () => {
         voicePlayer.stop();
         clearScreenshot();
@@ -420,10 +426,39 @@ if (setupForm) {
         state.pending = null;
         await refreshAll();
       });
-      if (conversation.id === state.selected) item.className = "selected";
+      item.className = "conversation-title";
+      if (conversation.id === state.selected) {
+        row.className += " selected";
+        item.setAttribute("aria-current", "true");
+      }
       item.title = conversation.title;
-      conversationsNode.append(item);
+      const pin = button("", async () => {
+        if (pin.disabled) return;
+        pin.disabled = true;
+        say("");
+        try {
+          await api(`/api/conversations/${encodeURIComponent(conversation.id)}/pin`, "POST", { pinned: !conversation.pinned });
+          const restoredFocus = await refreshConversations(pin, conversation.id);
+          if (!restoredFocus) conversationsNode.scrollTop = 0;
+        } catch (error) { say(error.message); }
+        finally { pin.disabled = false; }
+      });
+      pin.className = "pin-chat";
+      pin.title = conversation.pinned ? "Открепить диалог" : "Закрепить диалог";
+      pin.setAttribute("aria-label", `${pin.title}: ${conversation.title}`);
+      pin.setAttribute("aria-pressed", String(Boolean(conversation.pinned)));
+      const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      icon.setAttribute("viewBox", "0 0 24 24");
+      icon.setAttribute("aria-hidden", "true");
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", "M16 9V4l1-1H7l1 1v5l-3 3v2h6v7l2-2v-5h6v-2l-3-3Z");
+      icon.append(path);
+      pin.append(icon);
+      row.append(item, pin);
+      conversationsNode.append(row);
+      if (restorePinFocus && conversation.id === focusId) pin.focus();
     }
+    return Boolean(restorePinFocus);
   }
 
   function listen(jobId) {

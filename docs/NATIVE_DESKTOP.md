@@ -1,4 +1,4 @@
-# Native Windows desktop — installed 0.3.4 preview
+# Native Windows desktop — installed 0.3.5 preview
 
 Date: 11 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
 
@@ -92,6 +92,14 @@ The fixed native smoke scenario always creates its own temporary data directory,
 - Starting or creating a new chat returns the conversation list to the top so the new entry is visible. Opening an existing chat and ordinary refreshes retain the sidebar's scroll position.
 - Regression coverage verifies ordering in a temporary database, equal timestamps with IDs opposite to creation order, persistence after reopening, initial selection of the newest chat, revealing a newly created entry, and preserving scroll position while browsing older chats.
 - **334 Python tests passed, 3 hardware opt-ins skipped; 16 JavaScript tests passed**. Ruff, mypy and Release publish passed. Built and installed `dist/Jarvis-0.3.4-preview.msi` over 0.3.3 (exit 0; installed file version 0.3.4.0). Installed native smoke passed with complete process-tree exit. The existing idle application was closed normally for installation and reopened using its original data shortcut.
+
+### 0.3.5 persistent conversation pins
+
+- Each sidebar row has separate chat-selection and pin buttons. The outline pin appears on hover/keyboard focus; a pinned chat always shows a mint pin. The same button unpins it. Buttons have Russian labels, toggle state for assistive technology, and retain keyboard focus after reordering. Pinning does not switch chats, clear input, stop audio or restart inference.
+- SQLite migration 009 adds a checked boolean pin flag with an unpinned default. Lists sort pinned chats first, then creation time within each group. The application service sets an explicit desired state, acknowledges only committed results and verifies stable conversation identity after await cancellation. The authenticated, CSRF-protected pin endpoint accepts only a strict boolean. No new runtime dependency or inference capability is added.
+- Regression tests cover restart/backup persistence, idempotent pin/unpin, creation order, missing records, rollback, v8 migration preserving complete/failed/incomplete history, failed-DDL rollback and retry, cancelled awaits, API access/input boundaries, and keeping draft/selection/focus intact. Older sidebar fetches cannot overwrite a newer refresh.
+- **340 Python tests passed, 3 hardware opt-ins skipped; 17 JavaScript tests passed**. Ruff, mypy and Release publish passed. An isolated Chromium run exercised the packaged interface against its real API: mouse pin, keyboard unpin, reload persistence, newly created ordinary chats below pins, and unchanged draft/selection, with zero provider calls. Hover/pinned screenshots were inspected.
+- Built and installed `dist/Jarvis-0.3.5-preview.msi` over 0.3.4 (exit 0; installed file version 0.3.5.0). Installed native-host smoke passed with verified tree exit. Before upgrading, a consistent SQLite snapshot was saved outside the distribution under ignored `run/pre-035-conversation-pins.db`. The existing idle application was closed normally and reopened; migration 009 completed with unchanged conversation/turn/message counts and a successful SQLite quick check.
 
 ## Remaining before a complete out-of-box release
 

@@ -128,6 +128,23 @@ class ConversationService:
     def list_conversations(self) -> list[Conversation]:
         return self.store.list_conversations()
 
+    async def set_pinned(self, conversation_id: str, pinned: bool) -> Conversation:
+        try:
+            return await self.store.run(
+                lambda: self.store.set_conversation_pinned(conversation_id, pinned)
+            )
+        except asyncio.CancelledError:
+            # The owner may already have committed. Verify by stable conversation
+            # identity; an explicit desired state also makes retries idempotent.
+            current = await _settle(
+                asyncio.create_task(
+                    self.store.run(lambda: self.store.get_conversation(conversation_id))
+                )
+            )
+            if current.pinned == pinned:
+                return current
+            raise
+
     def resume(
         self, conversation_id: str
     ) -> tuple[Conversation, list[Turn], list[Message]]:

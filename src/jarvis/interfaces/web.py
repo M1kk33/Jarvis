@@ -58,6 +58,10 @@ class _Conversation(_Input):
     title: str = Field(min_length=1, max_length=200)
 
 
+class _ConversationPin(_Input):
+    pinned: bool
+
+
 class _Send(_Input):
     text: str = Field(min_length=1, max_length=65_536)
     submission_id: str = Field(min_length=1, max_length=200)
@@ -369,6 +373,13 @@ def create_web_app(
             lambda: service.store.create_conversation(supplied.title)
         )
         return JSONResponse(asdict(conversation), status_code=201)
+
+    @app.post("/api/conversations/{conversation_id}/pin")
+    async def pin_conversation(request: Request, conversation_id: str):
+        authorize(request, mutate=True)
+        supplied = await _body(request, _ConversationPin)
+        conversation = await service.set_pinned(conversation_id, supplied.pinned)
+        return asdict(conversation)
 
     @app.get("/api/conversations/{conversation_id}")
     async def conversation(request: Request, conversation_id: str):

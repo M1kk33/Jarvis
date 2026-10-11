@@ -107,6 +107,7 @@ class Conversation:
     id: str
     title: str
     created_at: str
+    pinned: bool = False
 
 
 @dataclass(frozen=True)

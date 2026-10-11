@@ -15,7 +15,7 @@ function fixture({ vision = false, decode, history, conversations: initialConver
     addEventListener(name, handler) { this.handlers[name] = handler; }
     setAttribute(name, value) { this[name] = value; }
     removeAttribute(name) { delete this[name]; }
-    focus() {}
+    focus() { document.activeElement = this; }
     requestSubmit() { return this.handlers.submit({ preventDefault() {} }); }
   }
   const elements = new Map();
@@ -29,6 +29,7 @@ function fixture({ vision = false, decode, history, conversations: initialConver
   let createdConversations = 0;
   let approvals = { approvals: [], uncertain_actions: [], uncertain_files: [] };
   let failSend = false;
+  let failPin = false;
   let jobs = [];
   const sources = [];
   const handlers = {};
@@ -42,7 +43,7 @@ function fixture({ vision = false, decode, history, conversations: initialConver
       canvases.push(el);
     }
     return el;
-  }, addEventListener(name, handler) { handlers[name] = handler; } };
+  }, createElementNS() { return new Element(); }, addEventListener(name, handler) { handlers[name] = handler; } };
   const window = {
     location: { hash: "", pathname: "/", search: "" }, addEventListener() {},
     JarvisVoicePlayer: class { stop() {} },
@@ -68,17 +69,25 @@ function fixture({ vision = false, decode, history, conversations: initialConver
       else if (url === "/api/conversations" && options.method === "POST") {
         value = { id: `conversation-${++createdConversations}`, title: payload.title };
         conversations = [value, ...conversations];
-      } else if (url === "/api/conversations") value = { conversations };
+      } else if (url === "/api/conversations") value = { conversations: [...conversations.filter((c) => c.pinned), ...conversations.filter((c) => !c.pinned)] };
+      else if (url.endsWith("/pin")) {
+        const id = decodeURIComponent(url.split("/").at(-2));
+        if (failPin) { value = { detail: "Pin request failed" }; ok = false; }
+        else {
+          conversations = conversations.map((c) => c.id === id ? { ...c, pinned: payload.pinned } : c);
+          value = conversations.find((c) => c.id === id);
+        }
+      }
       else if (url === "/api/jobs") value = { jobs };
       else if (url === "/api/approvals") value = approvals;
       else if (url.endsWith("/messages") || url.endsWith("/vision")) {
         value = failSend ? { detail: "Try again" } : { job: { id: "job-1" } };
         ok = !failSend;
-      } else value = { conversation: conversations[0], messages: [], turns: [], drafts: [], ...history };
+      } else value = { conversation: conversations.find((c) => url.endsWith(`/${c.id}`)), messages: [], turns: [], drafts: [], ...history };
       return { ok, status: ok ? 200 : 503, json: async () => value };
     },
   });
-  return { get, requests, handlers, canvases, revoked, sources, setJobs(value) { jobs = value; }, setApprovals(value) { approvals = value; }, failSend(value) { failSend = value; } };
+  return { get, requests, handlers, canvases, revoked, sources, activeElement() { return document.activeElement; }, failPin(value) { failPin = value; }, setJobs(value) { jobs = value; }, setApprovals(value) { approvals = value; }, failSend(value) { failSend = value; } };
 }
 const settle = () => new Promise(setImmediate);
 
@@ -88,23 +97,50 @@ test("new conversations appear at the top and reveal it without resetting older-
   ] });
   await settle();
   const nav = f.get("conversations");
-  assert.deepEqual(nav.children.map((item) => item.textContent), ["Recent", "Old"]);
-  assert.equal(nav.children[0].className, "selected");
+  assert.deepEqual(nav.children.map((row) => row.children[0].textContent), ["Recent", "Old"]);
+  assert.match(nav.children[0].className, /selected/);
   assert.ok(f.requests.some((r) => r.url === "/api/conversations/recent"));
   nav.scrollTop = 400;
-  await nav.children[1].handlers.click();
+  await nav.children[1].children[0].handlers.click();
   assert.equal(nav.scrollTop, 400);
-  assert.equal(nav.children[1].className, "selected");
+  assert.match(nav.children[1].className, /selected/);
   await f.get("new-conversation").handlers.click();
   assert.equal(nav.scrollTop, 0);
   nav.scrollTop = 400;
   f.get("message-input").value = "Newest";
   await f.get("send-form").requestSubmit();
   assert.equal(nav.scrollTop, 0);
-  assert.deepEqual(nav.children.map((item) => item.textContent), ["Newest", "Recent", "Old"]);
-  assert.equal(nav.children[0].className, "selected");
+  assert.deepEqual(nav.children.map((row) => row.children[0].textContent), ["Newest", "Recent", "Old"]);
+  assert.match(nav.children[0].className, /selected/);
   await f.get("refresh").handlers.click();
-  assert.equal(nav.children[0].textContent, "Newest");
+  assert.equal(nav.children[0].children[0].textContent, "Newest");
+});
+
+test("pinning moves a chat above newer ones without switching or discarding a draft", async () => {
+  const f = fixture({ conversations: [{ id: "recent", title: "Recent" }, { id: "old", title: "Old" }] });
+  await settle();
+  const nav = f.get("conversations");
+  f.get("message-input").value = "Unsent draft";
+  const pin = nav.children[1].children[1];
+  pin.focus();
+  await pin.handlers.click();
+  assert.deepEqual(f.requests.find((r) => r.url === "/api/conversations/old/pin").payload, { pinned: true });
+  assert.deepEqual(nav.children.map((row) => row.children[0].textContent), ["Old", "Recent"]);
+  assert.equal(nav.children[0].children[1]["aria-pressed"], "true");
+  assert.equal(f.activeElement(), nav.children[0].children[1]);
+  assert.match(nav.children[1].className, /selected/);
+  assert.equal(f.get("message-input").value, "Unsent draft");
+  assert.equal(f.get("conversation-title").textContent, "Recent");
+  await nav.children[0].children[1].handlers.click();
+  assert.deepEqual(nav.children.map((row) => row.children[0].textContent), ["Recent", "Old"]);
+  assert.equal(nav.children[1].children[1]["aria-pressed"], "false");
+  f.failPin(true);
+  const failedPin = nav.children[1].children[1];
+  await failedPin.handlers.click();
+  assert.equal(failedPin.disabled, false);
+  assert.equal(failedPin["aria-pressed"], "false");
+  assert.equal(f.get("notice").textContent, "Pin request failed");
+  assert.equal(f.requests.filter((r) => r.url.endsWith("/messages")).length, 0);
 });
 
 test("image progress updates the message and ignores stale closed streams", async () => {

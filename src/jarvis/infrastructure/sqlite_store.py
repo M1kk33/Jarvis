@@ -244,6 +244,7 @@ class SqliteStore:
             (6, "006_vision.sql"),
             (7, "007_retrieval.sql"),
             (8, "008_tool_acknowledgements.sql"),
+            (9, "009_conversation_pins.sql"),
         ):
             script = (
                 resources.files("jarvis")
@@ -387,7 +388,9 @@ class SqliteStore:
 
     @staticmethod
     def _conversation(row: sqlite3.Row) -> Conversation:
-        return Conversation(row["id"], row["title"], row["created_at"])
+        return Conversation(
+            row["id"], row["title"], row["created_at"], bool(row["pinned"])
+        )
 
     @staticmethod
     def _turn(row: sqlite3.Row) -> Turn:
@@ -437,20 +440,38 @@ class SqliteStore:
     @_on_owner
     def list_conversations(self) -> list[Conversation]:
         rows = self._conn.execute(
-            "SELECT id, title, created_at FROM conversations "
-            "ORDER BY created_at DESC, rowid DESC"
+            "SELECT id, title, created_at, pinned FROM conversations "
+            "ORDER BY pinned DESC, created_at DESC, rowid DESC"
         ).fetchall()
         return [self._conversation(row) for row in rows]
 
     @_on_owner
     def get_conversation(self, conversation_id: str) -> Conversation:
         row = self._conn.execute(
-            "SELECT id, title, created_at FROM conversations WHERE id=?",
+            "SELECT id, title, created_at, pinned FROM conversations WHERE id=?",
             (conversation_id,),
         ).fetchone()
         if row is None:
             raise ConversationNotFound(f"Conversation {conversation_id} does not exist")
         return self._conversation(row)
+
+    @_on_owner
+    def set_conversation_pinned(
+        self, conversation_id: str, pinned: bool
+    ) -> Conversation:
+        if type(pinned) is not bool:
+            raise ValueError("Pinned must be a boolean")
+        with self._transaction():
+            changed = self._conn.execute(
+                "UPDATE conversations SET pinned=? WHERE id=?",
+                (int(pinned), conversation_id),
+            )
+            if changed.rowcount != 1:
+                raise ConversationNotFound(
+                    f"Conversation {conversation_id} does not exist"
+                )
+            record = self.get_conversation(conversation_id)
+        return record
 
     @_on_owner
     def get_turns(self, conversation_id: str) -> list[Turn]:

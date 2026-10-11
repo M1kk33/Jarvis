@@ -40,7 +40,18 @@ h3 { margin: 2rem 0 1rem; }
 .sidebar nav { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; min-height: 0; }
 .sidebar nav button { text-align: left; background: transparent; color: #a8aeb9; font-weight: 400; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; flex-shrink: 0; }
 .sidebar nav button:hover { background: #21252b; color: white; }
-.sidebar nav button.selected { background: #292e35; color: #f0f4f2; border-left-color: var(--accent); }
+.conversation-row { display: flex; align-items: center; flex-shrink: 0; min-width: 0; border: 1px solid transparent; border-radius: 9px; }
+.conversation-row:hover { background: #21252b; }
+.conversation-row.selected { background: #292e35; border-left-color: var(--accent); }
+.sidebar nav .conversation-title { flex: 1; min-width: 0; border: 0; padding-left: 14px; padding-right: 6px; }
+.sidebar nav .conversation-title:hover { background: transparent; }
+.conversation-row.selected .conversation-title { color: #f0f4f2; }
+.sidebar nav .pin-chat { display: grid; place-items: center; flex: 0 0 30px; width: 30px; height: 32px; padding: 6px; margin-right: 4px; border: 0; border-radius: 6px; color: #939da9; opacity: 0; }
+.conversation-row:hover .pin-chat, .conversation-row:focus-within .pin-chat, .sidebar nav .pin-chat[aria-pressed="true"] { opacity: 1; }
+.sidebar nav .pin-chat[aria-pressed="true"] { color: var(--accent); }
+.pin-chat svg { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
+.pin-chat[aria-pressed="true"] svg { fill: currentColor; }
+@media (hover: none) { .sidebar nav .pin-chat { opacity: 1; } }
 .sidebar-footer { margin-top: auto; padding: 24px 8px 0; display: flex; align-items: center; gap: 10px; font-size: 11px; color: #bac3bf; }
 .sidebar-footer small { display: block; color: #79828c; margin-top: 5px; font-size: 10px; }
 .status-dot { width: 6px; height: 6px; background: var(--accent); border-radius: 50%; flex-shrink: 0; }
