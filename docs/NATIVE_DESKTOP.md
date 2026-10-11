@@ -129,6 +129,14 @@ The fixed native smoke scenario always creates its own temporary data directory,
 - **340 Python tests passed, 3 hardware opt-ins skipped; 19 JavaScript tests passed**. Ruff, Release publish and build-native smoke passed, including the microphone policy, synthetic media, window controls and verified process-tree exit. The temporary 0.3.9 installer used during qualification is superseded by `dist/Jarvis-0.3.10-preview.msi`; 0.3.10 includes the corrected smoke scenario.
 - Installed 0.3.10 (MSI exit 0; installed file version 0.3.10.0). Installed native smoke passed with `microphone_permission_tested=true`, `microphone_fake_stream_tested=true` and verified tree exit. The full-window screenshot was inspected. Reopened the application using the existing shortcut; history counts were unchanged across both local upgrades and SQLite quick check passed.
 
+### 0.3.11 streaming reply layout
+
+- Partial replies render as assistant messages immediately after their user turn inside the conversation scroll area. They use the final reply's width, padding, font and line height; the separate draft panel and its internal scrollbar were removed. Empty drafts occupy no space. Failed, cancelled and interrupted checkpoints remain visible in the same position in history.
+- SSE updates change only the matching turn's partial reply. Live text survives a history refresh without a duplicate or regression to an older checkpoint. Superseded history fetches and closed streams cannot restore an obsolete draft after completion or a chat switch. Streaming follows the bottom only when the reader is already near it.
+- **340 Python tests passed, 3 hardware opt-ins skipped; 24 JavaScript tests passed**. Ruff, Release publish and portable native smoke passed. An isolated Chromium run exercised the packaged interface against the real API and SSE with a controlled fake provider at 850×620, 1280×820 and 1920×1032. Streaming/final geometry matched; composer size and conversation viewport stayed stable; long replies used the conversation scrollbar, reading older text was not interrupted, and refresh did not duplicate the draft. Screenshots were inspected.
+
+- Installed 0.3.11 (MSI exit 0; file version 0.3.11.0). Installed native smoke passed, including microphone policy, synthetic capture, window controls and verified tree exit. The full-window screenshot was inspected; history counts stayed unchanged and SQLite quick check passed. Reopened the existing application shortcut. Installer: `dist/Jarvis-0.3.11-preview.msi`.
+
 ## Remaining before a complete out-of-box release
 
 - The offline full archive is implemented. Online delivery, resumable setup, separate capability packs and component upgrades are not implemented. The app-only MSI requires either that archive or an existing configured data folder.

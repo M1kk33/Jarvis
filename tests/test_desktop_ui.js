@@ -7,7 +7,7 @@ const vm = require("node:vm");
 const { randomUUID } = require("node:crypto");
 const source = fs.readFileSync(path.join(__dirname, "../src/jarvis/interfaces/static/app.js"), "utf8");
 
-function fixture({ vision = false, decode, history, conversations: initialConversations = [] } = {}) {
+function fixture({ vision = false, decode, history, loadHistory, conversations: initialConversations = [] } = {}) {
   class Element {
     constructor() { this.children = []; this.handlers = {}; this.hidden = true; this.value = ""; this.files = []; this.textContent = ""; this.style = {}; this.scrollHeight = 36; this.classList = { add() {}, remove() {} }; }
     append(...items) { this.children.push(...items); }
@@ -86,7 +86,10 @@ function fixture({ vision = false, decode, history, conversations: initialConver
       else if (url.endsWith("/messages") || url.endsWith("/vision")) {
         value = failSend ? { detail: "Try again" } : { job: { id: "job-1" } };
         ok = !failSend;
-      } else value = { conversation: conversations.find((c) => url.endsWith(`/${c.id}`)), messages: [], turns: [], drafts: [], ...history };
+      } else {
+        value = { conversation: conversations.find((c) => url.endsWith(`/${c.id}`)), messages: [], turns: [], drafts: [], ...history };
+        if (loadHistory) value = await loadHistory(value);
+      }
       return { ok, status: ok ? 200 : 503, json: async () => value };
     },
   });
@@ -200,8 +203,100 @@ test("image progress updates the message and ignores stale closed streams", asyn
   assert.match(strings(f.get("messages")), /Генерирую изображение/);
   await f.get("new-conversation").handlers.click();
   await source.handlers.progress({ data: JSON.stringify({ job: newer, draft: "stale draft" }) });
-  assert.equal(f.get("draft").textContent, "");
+  assert.doesNotMatch(strings(f.get("messages")), /stale draft/);
   assert.equal(f.get("conversation-title").textContent, "Новый диалог");
+});
+
+test("streaming reply stays in assistant flow through refresh, completion and stale events", async () => {
+  const history = {
+    messages: [{ id: "user-1", turn_id: "turn-1", role: "user", text: "Story" }],
+    turns: [{ id: "turn-1", status: "generating" }],
+    drafts: [{ turn_id: "turn-1", text: "Saved partial" }],
+  };
+  const f = fixture({ history });
+  await settle();
+  f.get("message-input").value = "Story";
+  await f.get("send-form").requestSubmit();
+  const messages = f.get("messages");
+  const partial = () => messages.children[1];
+  assert.equal(partial().className, "message assistant");
+  assert.equal(partial().children[0].textContent, "Jarvis");
+  assert.equal(partial().children[1].textContent, "Saved partial");
+  const job = { id: "job-1", conversation_id: "conversation-1", turn_id: "turn-1", status: "running", progress: "generating", updated_at: "2026-10-11T10:00:00Z" };
+  const source = f.sources.at(-1);
+  const progress = (text, status = "running") => source.handlers.progress({ data: JSON.stringify({ job: { ...job, status }, draft: text }) });
+  messages.clientHeight = 400;
+  messages.scrollHeight = 1000;
+  messages.scrollTop = 600;
+  await progress("Live partial");
+  assert.equal(partial().children[1].textContent, "Live partial");
+  assert.equal(messages.scrollTop, 1000);
+  messages.scrollTop = 100;
+  await progress("Live partial with more text");
+  assert.equal(messages.scrollTop, 100, "reading older content must not be interrupted");
+  await f.get("refresh").handlers.click();
+  assert.equal(messages.children.length, 2, "refresh must not duplicate the draft inside the user card");
+  assert.equal(messages.children[0].children.length, 3);
+  assert.equal(partial().children[1].textContent, "Live partial with more text", "older persisted checkpoint must not replace live text");
+  history.turns[0].status = "complete";
+  history.messages.push({ id: "assistant-1", turn_id: "turn-1", role: "assistant", text: "Final story" });
+  await progress("Final story", "succeeded");
+  assert.equal(source.closed, true);
+  assert.equal(messages.children.length, 2);
+  assert.equal(partial().className, "message assistant");
+  assert.equal(partial().children[1].textContent, "Final story");
+  await progress("stale terminal draft");
+  assert.equal(partial().children[1].textContent, "Final story");
+});
+
+for (const status of ["failed", "cancelled", "interrupted"]) {
+  test(`restored ${status} draft remains an assistant message beside its turn`, async () => {
+    const f = fixture({ conversations: [{ id: "saved", title: "Saved" }], history: {
+      messages: [
+        { id: "user-1", turn_id: "turn-1", role: "user", text: "Earlier" },
+        { id: "user-2", turn_id: "turn-2", role: "user", text: "Later" },
+      ],
+      turns: [{ id: "turn-1", status }, { id: "turn-2", status: "pending" }],
+      drafts: [{ turn_id: "turn-1", text: "Preserved partial" }],
+    } });
+    await settle();
+    const cards = f.get("messages").children;
+    assert.equal(cards[1].className, "message assistant");
+    assert.equal(cards[1].children[1].textContent, "Preserved partial");
+    assert.equal(cards[1].hidden, false);
+    assert.equal(cards[2].className, "message user");
+    assert.equal(cards[3].hidden, true, "empty pending draft must not add visible space");
+  });
+}
+
+test("a delayed conversation fetch cannot put a draft back after terminal refresh", async () => {
+  let defer = false;
+  let release;
+  const history = {
+    messages: [{ id: "user-1", turn_id: "turn-1", role: "user", text: "Story" }],
+    turns: [{ id: "turn-1", status: "generating" }], drafts: [],
+  };
+  const f = fixture({ history, loadHistory: (value) => {
+    if (!defer) return value;
+    defer = false;
+    const snapshot = JSON.parse(JSON.stringify(value));
+    return new Promise((resolve) => { release = () => resolve(snapshot); });
+  } });
+  await settle();
+  f.get("message-input").value = "Story";
+  await f.get("send-form").requestSubmit();
+  defer = true;
+  const older = f.get("refresh").handlers.click();
+  await settle();
+  history.turns[0].status = "complete";
+  history.messages.push({ id: "assistant-1", turn_id: "turn-1", role: "assistant", text: "Committed reply" });
+  await f.sources.at(-1).handlers.progress({ data: JSON.stringify({
+    job: { id: "job-1", conversation_id: "conversation-1", turn_id: "turn-1", status: "succeeded" }, draft: "Committed reply",
+  }) });
+  release();
+  await older;
+  assert.equal(f.get("messages").children.length, 2);
+  assert.equal(f.get("messages").children[1].children[1].textContent, "Committed reply");
 });
 
 test("first message creates one conversation and failed send keeps submission identity", async () => {

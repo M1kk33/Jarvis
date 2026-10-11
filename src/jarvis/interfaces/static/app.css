@@ -81,8 +81,6 @@ h3 { margin: 2rem 0 1rem; }
 .message pre, .card pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 0; }
 .message details { font-size: 12px; color: var(--muted); padding: 8px 0; }
 .generated-image { display: block; width: min(100%, 512px); height: auto; margin: 12px 0; border-radius: 10px; }
-.draft { max-height: 25vh; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 32px 14px; padding: 16px; border-left: 2px solid var(--accent); color: #b5c6bf; font: inherit; }
-.draft:empty { display: none; }
 .composer-wrap { padding: 0 32px 16px; }
 .composer { max-width: 800px; margin: auto; border: 1px solid #3a414a; border-radius: 28px; background: #1b1f25; padding: 8px; box-shadow: 0 8px 30px #0002; }
 .composer:focus-within { border-color: #68877b; }
