@@ -7,7 +7,7 @@ const vm = require("node:vm");
 const { randomUUID } = require("node:crypto");
 const source = fs.readFileSync(path.join(__dirname, "../src/jarvis/interfaces/static/app.js"), "utf8");
 
-function fixture({ vision = false, decode, history } = {}) {
+function fixture({ vision = false, decode, history, conversations: initialConversations = [] } = {}) {
   class Element {
     constructor() { this.children = []; this.handlers = {}; this.hidden = true; this.value = ""; this.files = []; this.textContent = ""; this.classList = { add() {}, remove() {} }; }
     append(...items) { this.children.push(...items); }
@@ -25,7 +25,8 @@ function fixture({ vision = false, decode, history } = {}) {
     return elements.get(id);
   };
   const requests = [];
-  let conversations = [];
+  let conversations = [...initialConversations];
+  let createdConversations = 0;
   let approvals = { approvals: [], uncertain_actions: [], uncertain_files: [] };
   let failSend = false;
   let jobs = [];
@@ -65,8 +66,8 @@ function fixture({ vision = false, decode, history } = {}) {
       let ok = true;
       if (url === "/api/session") value = { csrf_token: "test", speech_enabled: false, vision_enabled: vision };
       else if (url === "/api/conversations" && options.method === "POST") {
-        value = { id: "conversation-1", title: payload.title };
-        conversations = [value];
+        value = { id: `conversation-${++createdConversations}`, title: payload.title };
+        conversations = [value, ...conversations];
       } else if (url === "/api/conversations") value = { conversations };
       else if (url === "/api/jobs") value = { jobs };
       else if (url === "/api/approvals") value = approvals;
@@ -80,6 +81,31 @@ function fixture({ vision = false, decode, history } = {}) {
   return { get, requests, handlers, canvases, revoked, sources, setJobs(value) { jobs = value; }, setApprovals(value) { approvals = value; }, failSend(value) { failSend = value; } };
 }
 const settle = () => new Promise(setImmediate);
+
+test("new conversations appear at the top and reveal it without resetting older-chat browsing", async () => {
+  const f = fixture({ conversations: [
+    { id: "recent", title: "Recent" }, { id: "old", title: "Old" },
+  ] });
+  await settle();
+  const nav = f.get("conversations");
+  assert.deepEqual(nav.children.map((item) => item.textContent), ["Recent", "Old"]);
+  assert.equal(nav.children[0].className, "selected");
+  assert.ok(f.requests.some((r) => r.url === "/api/conversations/recent"));
+  nav.scrollTop = 400;
+  await nav.children[1].handlers.click();
+  assert.equal(nav.scrollTop, 400);
+  assert.equal(nav.children[1].className, "selected");
+  await f.get("new-conversation").handlers.click();
+  assert.equal(nav.scrollTop, 0);
+  nav.scrollTop = 400;
+  f.get("message-input").value = "Newest";
+  await f.get("send-form").requestSubmit();
+  assert.equal(nav.scrollTop, 0);
+  assert.deepEqual(nav.children.map((item) => item.textContent), ["Newest", "Recent", "Old"]);
+  assert.equal(nav.children[0].className, "selected");
+  await f.get("refresh").handlers.click();
+  assert.equal(nav.children[0].textContent, "Newest");
+});
 
 test("image progress updates the message and ignores stale closed streams", async () => {
   const f = fixture({ history: {

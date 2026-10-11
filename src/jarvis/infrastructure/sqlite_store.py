@@ -437,7 +437,8 @@ class SqliteStore:
     @_on_owner
     def list_conversations(self) -> list[Conversation]:
         rows = self._conn.execute(
-            "SELECT id, title, created_at FROM conversations ORDER BY created_at, id"
+            "SELECT id, title, created_at FROM conversations "
+            "ORDER BY created_at DESC, rowid DESC"
         ).fetchall()
         return [self._conversation(row) for row in rows]
 

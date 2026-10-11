@@ -17,6 +17,33 @@ from jarvis.infrastructure.providers.fake import FakeChatProvider
 from jarvis.infrastructure.sqlite_store import SqliteStore
 
 
+def test_conversations_are_newest_first_including_equal_times_after_restart(
+    tmp_path, monkeypatch
+):
+    with SqliteStore(tmp_path) as store:
+        times = iter(
+            [
+                "2026-10-10T12:00:00+00:00",
+                "2026-10-11T12:00:00+00:00",
+                "2026-10-11T12:00:00+00:00",
+            ]
+        )
+        ids = iter(["old", "z-recent", "a-newest"])
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                "jarvis.infrastructure.sqlite_store._now", lambda: next(times)
+            )
+            patch.setattr("jarvis.infrastructure.sqlite_store.uuid4", lambda: next(ids))
+            oldest = store.create_conversation("Oldest")
+            recent = store.create_conversation("Recent")
+            newest = store.create_conversation("Newest")
+        expected = [newest, recent, oldest]
+        assert store.list_conversations() == expected
+
+    with SqliteStore(tmp_path) as store:
+        assert store.list_conversations() == expected
+
+
 def test_two_turns_then_restart_reconstructs_ordered_history(tmp_path):
     with SqliteStore(tmp_path) as store:
         fake = FakeChatProvider()

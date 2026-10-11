@@ -581,6 +581,7 @@ if (setupForm) {
       state.selected = null;
       state.fresh = true;
       inputNode.value = "";
+      conversationsNode.scrollTop = 0;
       await refreshAll();
       inputNode.focus();
     } catch (error) { say(error.message); }
@@ -608,6 +609,7 @@ if (setupForm) {
         const created = await api("/api/conversations", "POST", { title: text.trim().slice(0, 60) });
         state.selected = created.id;
         state.fresh = false;
+        conversationsNode.scrollTop = 0;
       }
       const result = screenshot
         ? await api(`/api/conversations/${encodeURIComponent(state.selected)}/vision`, "POST", {

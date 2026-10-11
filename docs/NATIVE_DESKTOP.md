@@ -1,4 +1,4 @@
-# Native Windows desktop — installed 0.3.3 preview
+# Native Windows desktop — installed 0.3.4 preview
 
 Date: 11 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
 
@@ -85,6 +85,13 @@ The fixed native smoke scenario always creates its own temporary data directory,
 - Custom styling applies only outside Windows forced-color mode, which retains system scrollbars. Non-WebKit browsers receive the standard thin-scrollbar fallback. Existing scroll containers and the message area's stable gutter remain intact.
 - Visual/interaction qualification used the packaged HTML/CSS in an isolated Chromium fixture with long conversation and message lists. Wheel scrolling and actual thumb dragging passed for both lists; screenshots at 850, 1280 and 1920 pixels were inspected, and forced-color mode restored native scrollbar sizing. This fixture used synthetic content and no user history.
 - Offline checks: **333 Python tests passed, 3 hardware opt-ins skipped; 15 JavaScript tests passed**. Built and installed `dist/Jarvis-0.3.3-preview.msi` over 0.3.2 (exit 0; installed file version 0.3.3.0). The installed native-host smoke passed, including window controls, chat, microphone refusal and verified full process-tree exit.
+
+### 0.3.4 newest conversations first
+
+- Conversation lists now use descending creation time, with descending SQLite row identity to preserve creation order for equal timestamps. The API and sidebar therefore show newly created conversations first, including after restart. No schema/data migration is needed.
+- Starting or creating a new chat returns the conversation list to the top so the new entry is visible. Opening an existing chat and ordinary refreshes retain the sidebar's scroll position.
+- Regression coverage verifies ordering in a temporary database, equal timestamps with IDs opposite to creation order, persistence after reopening, initial selection of the newest chat, revealing a newly created entry, and preserving scroll position while browsing older chats.
+- **334 Python tests passed, 3 hardware opt-ins skipped; 16 JavaScript tests passed**. Ruff, mypy and Release publish passed. Built and installed `dist/Jarvis-0.3.4-preview.msi` over 0.3.3 (exit 0; installed file version 0.3.4.0). Installed native smoke passed with complete process-tree exit. The existing idle application was closed normally for installation and reopened using its original data shortcut.
 
 ## Remaining before a complete out-of-box release
 
