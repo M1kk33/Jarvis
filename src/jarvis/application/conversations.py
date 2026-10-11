@@ -565,10 +565,19 @@ class ConversationService:
             if event is None:
                 break
             if isinstance(event, StreamTerminal):
-                if terminal or event.error_code is not None:
-                    raise RequestFailure(
-                        event.error_code or "backend_crashed", "Tool stream failed"
-                    )
+                if terminal:
+                    raise RequestFailure("backend_crashed", "Multiple stream terminals")
+                if event.error_code is not None:
+                    if parts:
+                        await self.store.run(
+                            partial(
+                                self.store.checkpoint_draft,
+                                turn_id,
+                                "".join(parts),
+                                job_attempt,
+                            )
+                        )
+                    raise RequestFailure(event.error_code, "Tool stream failed")
                 terminal = True
                 continue
             if terminal:
@@ -589,7 +598,7 @@ class ConversationService:
             ):
                 raise RequestFailure("backend_crashed", "Malformed tool stream event")
             size = len(event.text.encode("utf-8"))
-            if size > 4096 - received:
+            if size > max(1, self.context.output_allowance * 8) - received:
                 raise RequestFailure("invalid_request", "Reply exceeds byte limit")
             received += size
             parts.append(event.text)
@@ -696,10 +705,6 @@ class ConversationService:
             if received_bytes + delta_bytes > max_bytes:
                 raise RequestFailure("invalid_request", "Reply exceeds byte limit")
             received_bytes += delta_bytes
-            if len(event.text) > self.context.output_allowance:
-                raise RequestFailure(
-                    "invalid_request", "Reply delta exceeds output allowance"
-                )
             chunks.append(event.text)
             text = "".join(chunks)
             if (
@@ -730,6 +735,15 @@ class ConversationService:
         if terminal.error_code is not None:
             if terminal.error_code not in NORMALIZED_ERROR_CODES:
                 raise RequestFailure("backend_crashed", "Unknown stream error")
+            if chunks:
+                await self.store.run(
+                    partial(
+                        self.store.checkpoint_draft,
+                        turn_id,
+                        "".join(chunks),
+                        job_attempt,
+                    )
+                )
             raise RequestFailure(
                 terminal.error_code, "Provider returned a terminal error"
             )

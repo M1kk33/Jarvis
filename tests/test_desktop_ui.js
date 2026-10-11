@@ -299,6 +299,21 @@ test("a delayed conversation fetch cannot put a draft back after terminal refres
   assert.equal(f.get("messages").children[1].children[1].textContent, "Committed reply");
 });
 
+test("an output limit explains the partial reply without reporting a model crash", async () => {
+  const f = fixture({ conversations: [{ id: "saved", title: "Saved" }], history: {
+    messages: [{ id: "user-1", turn_id: "turn-1", role: "user", text: "Explain" }],
+    turns: [{ id: "turn-1", status: "failed", error_code: "output_limit" }],
+    drafts: [{ turn_id: "turn-1", text: "Preserved tail" }],
+  } });
+  await settle();
+  const cards = f.get("messages").children;
+  const strings = (node) => [node.textContent, ...node.children.flatMap(strings)].join(" ");
+  assert.match(strings(cards[0]), /Достигнут лимит длины ответа/);
+  assert.doesNotMatch(strings(cards[0]), /Ошибка/);
+  assert.equal(cards[1].children[1].textContent, "Preserved tail");
+  assert.match(strings(cards[1]), /разбейте вопрос на части/);
+});
+
 test("first message creates one conversation and failed send keeps submission identity", async () => {
   const f = fixture();
   await settle();

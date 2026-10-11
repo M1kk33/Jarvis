@@ -21,6 +21,7 @@ NORMALIZED_ERROR_CODES = frozenset(
         "timeout",
         "cancelled",
         "backend_crashed",
+        "output_limit",
     }
 )
 

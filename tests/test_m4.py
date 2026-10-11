@@ -134,7 +134,6 @@ def test_recorded_chat_contract_requires_auth_and_stream_terminal(tmp_path):
     [
         ['data: {"choices":[{"delta":{"tool_calls":[{}]},"finish_reason":null}]}'],
         ['data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}'],
-        ['data: {"choices":[{"delta":{},"finish_reason":"length"}]}', "data: [DONE]"],
         ["data: {invalid", "data: [DONE]"],
         ["data: " + "x" * 65_537],
         ['data: {"choices":[0]}', "data: [DONE]"],

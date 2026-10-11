@@ -312,10 +312,21 @@ class LlamaServerRuntime:
 
 class LlamaChatProvider:
     def __init__(
-        self, runtime: LlamaServerRuntime, transport: httpx.BaseTransport | None = None
+        self,
+        runtime: LlamaServerRuntime,
+        transport: httpx.BaseTransport | None = None,
+        *,
+        max_output_tokens: int = 512,
+        request_seconds: float = 120,
     ) -> None:
+        if type(max_output_tokens) is not int or not 1 <= max_output_tokens <= 2048:
+            raise ValueError("Output token budget must be between 1 and 2048")
+        if not 0 < request_seconds <= 300:
+            raise ValueError("Request deadline must be between 0 and 300 seconds")
         self.runtime = runtime
         self.transport = transport
+        self.max_output_tokens = max_output_tokens
+        self.request_seconds = request_seconds
 
     def count_prompt_tokens(
         self, messages: Sequence[Message], instructions: str
@@ -345,7 +356,7 @@ class LlamaChatProvider:
         ) as client:
             payload: dict[str, object] = {
                 "messages": _messages(messages, instructions),
-                "max_tokens": 512,
+                "max_tokens": self.max_output_tokens,
             }
             if tools is not None:
                 payload["tools"] = tools
@@ -482,7 +493,7 @@ class LlamaChatProvider:
                 headers={"Authorization": f"Bearer {endpoint.api_key}"},
                 json={
                     "messages": self._vision_messages(question, image, instructions),
-                    "max_tokens": 512,
+                    "max_tokens": self.max_output_tokens,
                 },
             )
             self._check_status(response)
@@ -514,7 +525,7 @@ class LlamaChatProvider:
         vision: tuple[str, bytes] | None = None,
     ) -> Iterator[StreamEvent]:
         endpoint = self.runtime.endpoint
-        deadline = time.monotonic() + 120
+        deadline = time.monotonic() + self.request_seconds
         headers = {"Authorization": f"Bearer {endpoint.api_key}"}
         payload: dict[str, object] = {
             "messages": (
@@ -522,7 +533,7 @@ class LlamaChatProvider:
                 if vision is not None
                 else _messages(messages, instructions)
             ),
-            "max_tokens": 512,
+            "max_tokens": self.max_output_tokens,
             "stream": True,
             "parse_tool_calls": tools is not None,
         }
@@ -667,9 +678,9 @@ class LlamaChatProvider:
                         if (
                             reason
                             not in (
-                                {"stop", "tool_calls"}
+                                {"stop", "tool_calls", "length"}
                                 if tools is not None
-                                else {"stop"}
+                                else {"stop", "length"}
                             )
                             or finished
                         ):
@@ -682,6 +693,10 @@ class LlamaChatProvider:
                     raise ProviderFailure(
                         "backend_crashed", "Stream ended before completion"
                     )
+                if finish_reason == "length":
+                    # A bounded, unfinished reply is not a crashed backend or an executable tool call.
+                    yield StreamTerminal("output_limit")
+                    return
                 if finish_reason == "tool_calls":
                     if not call_id or not call_name or not call_arguments:
                         raise ProviderFailure("backend_crashed", "Incomplete tool call")

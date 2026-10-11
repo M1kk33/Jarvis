@@ -59,6 +59,8 @@ from jarvis.interfaces.cli import dispatch, parse_args
 if TYPE_CHECKING:
     from jarvis.interfaces.web_control import WebControl
 
+LOCAL_CHAT_OUTPUT_TOKENS = 2048
+
 
 def main(
     argv: list[str] | None = None,
@@ -172,7 +174,11 @@ def main(
                         NamedGpuLock(profile.device_uuid),
                         SystemClock(),
                     )
-                    provider = LlamaChatProvider(runtime)
+                    provider = LlamaChatProvider(
+                        runtime,
+                        max_output_tokens=LOCAL_CHAT_OUTPUT_TOKENS,
+                        request_seconds=300,
+                    )
                 if args.command == "calibrate":
                     assert (
                         profile is not None
@@ -351,7 +357,12 @@ def main(
                     store,
                     provider,
                     context=(
-                        ContextBuilder(PreflightTokenEstimator()) if manager else None
+                        ContextBuilder(
+                            PreflightTokenEstimator(),
+                            output_allowance=LOCAL_CHAT_OUTPUT_TOKENS,
+                        )
+                        if manager
+                        else None
                     ),
                     diagnostics=diagnostics,
                     resource_manager=manager,

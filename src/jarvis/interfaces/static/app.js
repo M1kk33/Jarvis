@@ -299,6 +299,7 @@ if (setupForm) {
   }
 
   function jobLabel(job) {
+    if (job.error_code === "output_limit") return "Достигнут лимит длины ответа";
     return statusLabel(job.status === "running" ? (job.progress || job.status) : job.status);
   }
 
@@ -410,7 +411,7 @@ if (setupForm) {
         const turn = turns.get(message.turn_id);
         if (turn && turn.status !== "complete") {
           const job = jobUpdates.get(turn.id);
-          const node = line(card, `Состояние: ${job ? jobLabel(job) : statusLabel(turn.status)}`, "subtle");
+          const node = line(card, `Состояние: ${job ? jobLabel(job) : turn.error_code === "output_limit" ? "Достигнут лимит длины ответа" : statusLabel(turn.status)}`, "subtle");
           node.setAttribute("role", "status");
           turnStatusNodes.set(turn.id, node);
         }
@@ -443,6 +444,9 @@ if (setupForm) {
         const content = document.createElement("pre");
         content.textContent = liveDrafts.get(turn.id) ?? drafts.get(turn.id)?.text ?? "";
         partial.append(content);
+        if (turn.error_code === "output_limit") {
+          line(partial, "Ответ остановлен на лимите длины. Попросите более краткий ответ или разбейте вопрос на части.", "subtle");
+        }
         partial.hidden = !content.textContent;
         draftNodes.set(turn.id, { card: partial, content });
         messagesNode.append(partial);
@@ -548,7 +552,7 @@ if (setupForm) {
       updateJobProgress(job);
       const card = document.createElement("div");
       card.className = "card";
-      line(card, statusLabel(job.status));
+      line(card, jobLabel(job));
       line(card, statusLabel(job.progress), "subtle");
       if (!["succeeded", "failed", "cancelled"].includes(job.status)) {
         card.append(button("Отменить", async () => {
