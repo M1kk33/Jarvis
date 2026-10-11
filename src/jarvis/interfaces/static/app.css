@@ -1,6 +1,8 @@
 :root { color-scheme: dark; font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; color: #e7e9ec; background: #101216; font-size: 14px; --muted: #969da8; --line: #292d35; --accent: #9ce4cf; }
 /* Derive interaction colours from the selected accent in both themes. */
 :root { --accent-ink: #17212d; --accent-hover-mix: white; --accent-surface: #171b21; --accent-hover: color-mix(in srgb, var(--accent) 85%, var(--accent-hover-mix)); --accent-soft: color-mix(in srgb, var(--accent) 12%, var(--accent-surface)); --accent-soft-hover: color-mix(in srgb, var(--accent) 20%, var(--accent-surface)); --accent-border: color-mix(in srgb, var(--accent) 35%, var(--line)); --accent-focus: color-mix(in srgb, var(--accent) 65%, var(--line)); }
+/* Message and artifact cards share the saved accent; assistant replies stay unboxed. */
+:root { --message-surface: #17191e; --message-background: color-mix(in srgb, var(--accent) 7%, var(--message-surface)); --message-border: color-mix(in srgb, var(--accent) 12%, var(--line)); }
 * { box-sizing: border-box; }
 /* Keep native scrolling; style only its visible chrome. High contrast uses OS defaults. */
 @media (forced-colors: none) {
@@ -77,9 +79,8 @@ h3 { margin: 2rem 0 1rem; }
 .suggestions button:hover { border-color: var(--accent-border); background: var(--accent-soft); }
 .message { max-width: 780px; margin: 0 auto 25px; padding: 17px 21px; border-radius: 14px; line-height: 1.75; font-size: var(--chat-text-size, 14px); }
 .message.assistant { padding-left: 0; padding-right: 0; }
-.message.user { background: #20272a; border: 1px solid #303b3c; }
+.message.user { background: var(--message-background); border: 1px solid var(--message-border); }
 .message .role { font-size: 11px; font-weight: 600; color: var(--accent); letter-spacing: .03em; margin-bottom: 9px; }
-.message.user .role { color: #a7b3ba; }
 .message .turn-status { display: block; padding: 0; border: 0; background: transparent; text-align: left; font-weight: 400; }
 .message .turn-status:hover { color: var(--accent); background: transparent; }
 .attention-notice { display: block; margin: 0 auto 8px; padding: 6px 12px; font-size: 12px; color: var(--accent); }
@@ -154,7 +155,7 @@ summary { cursor: pointer; }
 .settings-footer p { flex: 1; font-size: 12px; line-height: 1.5; color: var(--muted); margin: 0; }
 :root[data-accent="blue"] { --accent: #a3ccff; }
 :root[data-accent="violet"] { --accent: #d5b7ff; }
-:root[data-theme="light"] { color-scheme: light; background: #f8f9fb; color: #20262f; --muted: #626c7b; --line: #dce1e7; --accent: #26765f; --accent-ink: white; --accent-hover-mix: black; --accent-surface: #f8f9fb; }
+:root[data-theme="light"] { color-scheme: light; background: #f8f9fb; color: #20262f; --muted: #626c7b; --line: #dce1e7; --accent: #26765f; --accent-ink: white; --accent-hover-mix: black; --accent-surface: #f8f9fb; --message-surface: #f8f9fb; }
 :root[data-theme="light"][data-accent="blue"] { --accent: #2263ae; }
 :root[data-theme="light"][data-accent="violet"] { --accent: #7850a9; }
 [data-theme="light"] button { color: white; }
@@ -174,8 +175,6 @@ summary { cursor: pointer; }
 [data-theme="light"] .suggestions button, [data-theme="light"] .composer, [data-theme="light"] .card { background: #f0f3f6; border-color: #cbd3dc; color: #374352; }
 [data-theme="light"] .suggestions button:hover { border-color: var(--accent-border); background: var(--accent-soft); }
 [data-theme="light"] .composer:focus-within { border-color: var(--accent-focus); }
-[data-theme="light"] .message.user { background: #e8efed; border-color: #d5e0dc; }
-[data-theme="light"] .message.user .role { color: #5c7068; }
 [data-theme="light"] .composer textarea { color: #20262f; }
 [data-theme="light"] .composer.drag-over { background: var(--accent-soft); border-color: var(--accent); }
 [data-theme="light"] .activity, [data-theme="light"] #settings-dialog { background: #f8f9fb; }
