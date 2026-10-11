@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Jarvis</AssemblyName>
-    <Version>0.3.2</Version>
+    <Version>0.3.3</Version>
     <ApplicationIcon>../../src/jarvis/interfaces/static/jarvis.ico</ApplicationIcon>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

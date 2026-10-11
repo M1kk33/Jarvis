@@ -1,6 +1,6 @@
-# Native Windows desktop — installed 0.3.2 preview
+# Native Windows desktop — installed 0.3.3 preview
 
-Date: 9 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
+Date: 11 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
 
 ## Implemented
 
@@ -78,6 +78,13 @@ The fixed native smoke scenario always creates its own temporary data directory,
 - The window retains its sizing/system-menu styles. Native edge/corner hit testing provides resize handles. Maximized client bounds exclude Windows' invisible sizing frame and match the monitor work area, preserving the taskbar. Button geometry scales with display DPI; multiple-monitor/DPI changes still need manual coverage on suitable hardware.
 - Offline checks: **333 Python tests passed, 3 hardware opt-ins skipped; 15 JavaScript tests passed**. Release publish passed without warnings/errors. The native smoke now checks caption removal, all eight resize handles, maximize/work-area bounds, restored bounds, minimize/restore, CSS drag/exclusion regions and closure through the new close button. It also retains chat, microphone-refusal and full process-tree cleanup coverage.
 - Built and installed `dist/Jarvis-0.3.2-preview.msi` over 0.3.1 (MSI exit 0; installed file version 0.3.2.0). The same installed-host smoke passed with `window_chrome_tested=true` and verified tree exit. A full-window screenshot, including native buttons, was visually inspected. User history/models were not opened by these isolated tests. Actual pointer dragging, Snap layouts and multiple displays are not certified by the synthetic smoke.
+
+### 0.3.3 scrollbar styling
+
+- Replaced the default wide scrollbar tracks and arrow buttons with transparent tracks and rounded, inset thumbs in the existing dark palette. Hover and dragging increase thumb contrast. Styling is shared by conversations, messages, drafts, the activity panel and overflowing text inputs; scrolling remains native, with no new JavaScript or dependencies.
+- Custom styling applies only outside Windows forced-color mode, which retains system scrollbars. Non-WebKit browsers receive the standard thin-scrollbar fallback. Existing scroll containers and the message area's stable gutter remain intact.
+- Visual/interaction qualification used the packaged HTML/CSS in an isolated Chromium fixture with long conversation and message lists. Wheel scrolling and actual thumb dragging passed for both lists; screenshots at 850, 1280 and 1920 pixels were inspected, and forced-color mode restored native scrollbar sizing. This fixture used synthetic content and no user history.
+- Offline checks: **333 Python tests passed, 3 hardware opt-ins skipped; 15 JavaScript tests passed**. Built and installed `dist/Jarvis-0.3.3-preview.msi` over 0.3.2 (exit 0; installed file version 0.3.3.0). The installed native-host smoke passed, including window controls, chat, microphone refusal and verified full process-tree exit.
 
 ## Remaining before a complete out-of-box release
 
