@@ -47,7 +47,7 @@ h3 { margin: 2rem 0 1rem; }
 .sidebar nav { display: flex; flex: 1; flex-direction: column; gap: 4px; overflow-y: auto; min-height: 0; }
 .sidebar nav button { text-align: left; background: transparent; color: #a8aeb9; font-weight: 400; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; flex-shrink: 0; }
 .sidebar nav button:hover { background: #21252b; color: white; }
-.conversation-row { display: flex; align-items: center; flex-shrink: 0; min-width: 0; border: 1px solid transparent; border-radius: 9px; }
+.conversation-row { display: flex; position: relative; align-items: center; flex-shrink: 0; min-width: 0; border: 1px solid transparent; border-radius: 9px; }
 .conversation-row:hover { background: #21252b; }
 .conversation-row.selected { background: #292e35; border-left-color: var(--accent); }
 .sidebar nav .conversation-title { flex: 1; min-width: 0; border: 0; padding-left: 14px; padding-right: 6px; }
@@ -59,6 +59,24 @@ h3 { margin: 2rem 0 1rem; }
 .pin-chat svg { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
 .pin-chat[aria-pressed="true"] svg { fill: currentColor; }
 @media (hover: none) { .sidebar nav .pin-chat { opacity: 1; } }
+.sidebar nav .delete-chat { display: grid; position: absolute; right: 4px; place-items: center; width: 28px; height: 32px; padding: 6px; border: 0; border-radius: 6px; color: #939da9; opacity: 0; pointer-events: none; }
+.conversation-row:hover .delete-chat, .conversation-row:focus-within .delete-chat { opacity: 1; pointer-events: auto; }
+.conversation-row:hover .pin-chat, .conversation-row:focus-within .pin-chat { margin-right: 32px; }
+.sidebar nav .delete-chat:hover { color: #f3a3a3; background: #e1707018; }
+.delete-chat svg { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+@media (hover: none) { .sidebar nav .delete-chat { opacity: 1; pointer-events: auto; } .sidebar nav .pin-chat { margin-right: 32px; } }
+#delete-chat-dialog { width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; border: 1px solid var(--line); border-radius: 16px; padding: 24px; color: inherit; background: #17191e; }
+#delete-chat-dialog::backdrop { background: #0009; }
+#delete-chat-dialog h2 { margin: 0 0 16px; font-size: 18px; text-transform: none; letter-spacing: normal; color: inherit; }
+#delete-chat-dialog p { line-height: 1.55; overflow-wrap: anywhere; }
+#delete-chat-name { font-weight: 600; }
+#delete-chat-description { color: var(--muted); }
+#delete-chat-status { color: #f3a3a3; }
+#delete-chat-status:empty { display: none; }
+.delete-chat-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
+.delete-chat-actions .danger { background: #bc4141; border-color: #bc4141; color: white; }
+.delete-chat-actions .danger:hover { background: #a93434; }
+[data-theme="light"] #delete-chat-dialog { background: #f8f9fb; }
 .chat { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .chat header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 22px 32px; border-bottom: 1px solid #22262d; }
 .heading { min-width: 0; }
@@ -219,6 +237,8 @@ summary { cursor: pointer; }
 [data-theme="light"] .new-chat { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-border); }
 [data-theme="light"] .new-chat:hover { background: var(--accent-soft-hover); }
 [data-theme="light"] .sidebar nav button { color: #566172; background: transparent; }
+[data-theme="light"] .sidebar nav .delete-chat:hover, [data-theme="light"] #delete-chat-status { color: #a42f2f; }
+[data-theme="light"] .delete-chat-actions .danger:hover { background: #a93434; }
 [data-theme="light"] .conversation-row:hover, [data-theme="light"] .sidebar nav button:hover { background: #e0e5ec; color: #20262f; }
 [data-theme="light"] .conversation-row.selected { background: #dce4eb; }
 [data-theme="light"] .conversation-row.selected .conversation-title { color: #20262f; }

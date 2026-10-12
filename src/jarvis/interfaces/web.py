@@ -482,6 +482,13 @@ def create_web_app(
             "invocations": [asdict(item) for item in invocations],
         }
 
+    @app.delete("/api/conversations/{conversation_id}")
+    async def delete_conversation(request: Request, conversation_id: str):
+        authorize(request, mutate=True)
+        await _body(request, _Empty)
+        await service.delete(conversation_id)
+        return {"deleted": True}
+
     @app.post("/api/conversations/{conversation_id}/messages")
     async def send(request: Request, conversation_id: str):
         authorize(request, mutate=True)

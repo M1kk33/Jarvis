@@ -20,6 +20,8 @@ function fixture({ vision = false, spoken = false, clipboard, regenerate, decode
     setAttribute(name, value) { this[name] = value; }
     removeAttribute(name) { delete this[name]; }
     focus() { document.activeElement = this; }
+    showModal() { this.open = true; }
+    close() { this.open = false; }
     click() { this.clicks = (this.clicks || 0) + 1; this.handlers.click?.(); }
     requestSubmit() { return this.handlers.submit({ preventDefault() {} }); }
     setPointerCapture(id) { this.captured.add(id); }
@@ -38,6 +40,7 @@ function fixture({ vision = false, spoken = false, clipboard, regenerate, decode
   let approvals = { approvals: [], uncertain_actions: [], uncertain_files: [] };
   let failSend = false;
   let failPin = false;
+  let failDelete = false;
   let jobs = [];
   const sources = [];
   const handlers = {};
@@ -101,6 +104,10 @@ function fixture({ vision = false, spoken = false, clipboard, regenerate, decode
         }
       }
       else if (url === "/api/jobs") value = { jobs };
+      else if (options.method === "DELETE") {
+        if (failDelete) { value = { detail: "Delete request failed" }; ok = false; }
+        else { conversations = conversations.filter(c => !url.endsWith(`/${c.id}`)); value = { deleted: true }; }
+      }
       else if (url === "/api/approvals") value = approvals;
       else if (url.endsWith("/regenerate")) {
         value = regenerate ? await regenerate(payload) : { job: { id: "job-regenerated" } };
@@ -118,9 +125,46 @@ function fixture({ vision = false, spoken = false, clipboard, regenerate, decode
   });
   vm.runInContext(markdownSource, context);
   vm.runInContext(source, context);
-  return { get, requests, handlers, canvases, revoked, sources, observers, voiceCalls, resizeWindow(width) { get("app-layout").clientWidth = width; observers.find(o => o.target === get("app-layout")).callback(); }, blurApp() { windowHandlers.blur(); }, hidePage() { windowHandlers.pagehide(); }, focusApp() { return windowHandlers.focus(); }, activeElement() { return document.activeElement; }, failPin(value) { failPin = value; }, setJobs(value) { jobs = value; }, setApprovals(value) { approvals = value; }, failSend(value) { failSend = value; } };
+  return { get, requests, handlers, canvases, revoked, sources, observers, voiceCalls, resizeWindow(width) { get("app-layout").clientWidth = width; observers.find(o => o.target === get("app-layout")).callback(); }, blurApp() { windowHandlers.blur(); }, hidePage() { windowHandlers.pagehide(); }, focusApp() { return windowHandlers.focus(); }, activeElement() { return document.activeElement; }, failPin(value) { failPin = value; }, failDelete(value) { failDelete = value; }, setJobs(value) { jobs = value; }, setApprovals(value) { approvals = value; }, failSend(value) { failSend = value; } };
 }
 const settle = () => new Promise(setImmediate);
+
+test("deletion requires confirmation, handles failure and keeps drafts and other selection", async () => {
+  const f = fixture({ conversations: [{ id: "chat", title: "Current" }, { id: "old", title: "Other <img>" }] });
+  await settle();
+  const nav = f.get("conversations");
+  f.get("message-input").value = "Unsent draft";
+  nav.children[1].children[2].handlers.click();
+  assert.equal(f.get("delete-chat-dialog").open, true);
+  assert.equal(f.get("delete-chat-name").textContent, "Other <img>");
+  assert.equal(f.activeElement(), f.get("cancel-delete-chat"));
+  f.get("cancel-delete-chat").handlers.click();
+  assert.equal(f.requests.some(r => r.method === "DELETE"), false);
+  nav.children[1].children[2].handlers.click();
+  f.failDelete(true);
+  await f.get("delete-chat-form").requestSubmit();
+  assert.equal(nav.children.length, 2);
+  assert.equal(f.get("delete-chat-dialog").open, true);
+  assert.equal(f.get("delete-chat-status").textContent, "Delete request failed");
+  assert.equal(f.get("message-input").value, "Unsent draft");
+  f.failDelete(false);
+  const pending = f.get("delete-chat-form").requestSubmit();
+  await f.get("delete-chat-form").requestSubmit();
+  await pending;
+  assert.equal(f.requests.filter(r => r.method === "DELETE").length, 2);
+  assert.equal(nav.children.length, 1);
+  assert.match(nav.children[0].className, /selected/);
+  assert.equal(f.get("conversation-title").textContent, "Current");
+  assert.equal(f.get("message-input").value, "Unsent draft");
+  nav.children[0].children[2].handlers.click();
+  await f.get("delete-chat-form").requestSubmit();
+  assert.equal(nav.children.length, 0);
+  assert.equal(f.get("conversation-title").textContent, "Новый диалог");
+  assert.equal(f.get("message-input").value, "Unsent draft");
+  assert.equal(f.get("delete-chat-dialog").open, false);
+  await f.focusApp();
+  assert.equal(nav.children.length, 0);
+});
 
 const replyHistory = () => ({ turns: [{ id: "turn", status: "complete" }], messages: [
   { id: "user", turn_id: "turn", role: "user", text: "Question" },

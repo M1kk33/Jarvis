@@ -49,7 +49,7 @@ from jarvis.domain.types import (
     TurnStatus,
     VisionInput,
 )
-from jarvis.infrastructure.artifacts import verify_artifact
+from jarvis.infrastructure.artifacts import artifact_path, verify_artifact
 
 T = TypeVar("T")
 
@@ -206,6 +206,8 @@ class SqliteStore:
                         (artifact["id"],),
                     )
 
+        self._cleanup_deleted_artifacts()
+
     def _close_connection(self) -> None:
         if hasattr(self, "_conn"):
             self._conn.close()
@@ -251,6 +253,7 @@ class SqliteStore:
             (10, "010_preferences.sql"),
             (11, "011_reply_versions.sql"),
             (12, "012_text_token_counts.sql"),
+            (13, "013_conversation_deletion.sql"),
         ):
             script = (
                 resources.files("jarvis")
@@ -555,6 +558,121 @@ class SqliteStore:
         if row is None:
             raise ConversationNotFound(f"Conversation {conversation_id} does not exist")
         return self._conversation(row)
+
+    @_on_owner
+    def is_conversation_deleted(self, conversation_id: str) -> bool:
+        return (
+            self._conn.execute(
+                "SELECT 1 FROM deleted_conversations WHERE id=?", (conversation_id,)
+            ).fetchone()
+            is not None
+        )
+
+    @_on_owner
+    def delete_conversation(self, conversation_id: str) -> None:
+        with self._transaction():
+            if not self.is_conversation_deleted(conversation_id):
+                self.get_conversation(conversation_id)
+                if self._conn.execute(
+                    "SELECT 1 FROM turns WHERE conversation_id=? AND status='pending' "
+                    "UNION ALL SELECT 1 FROM jobs WHERE conversation_id=? "
+                    "AND status IN ('queued','running','waiting_approval','cancel_requested') LIMIT 1",
+                    (conversation_id, conversation_id),
+                ).fetchone():
+                    raise ActiveTurnError(
+                        "Сначала завершите или отмените запрос в этом диалоге."
+                    )
+                if self._conn.execute(
+                    "SELECT 1 FROM tool_invocations WHERE conversation_id=? "
+                    "AND (status IN ('intent','proposed','waiting_approval') "
+                    "OR (status='outcome_unknown' AND acknowledged_at IS NULL)) LIMIT 1",
+                    (conversation_id,),
+                ).fetchone():
+                    raise ActiveTurnError(
+                        "Сначала разберите незавершённые действия в этом диалоге."
+                    )
+                # All related rows disappear atomically. Deferred checks cover
+                # job/tool cycles and self-referencing regenerated replies.
+                self._conn.execute("PRAGMA defer_foreign_keys=ON")
+                self._conn.execute(
+                    "INSERT INTO deleted_artifact_files SELECT relative_path,size_bytes,sha256 "
+                    "FROM artifacts WHERE job_id IN (SELECT id FROM jobs WHERE conversation_id=?)",
+                    (conversation_id,),
+                )
+                for table in (
+                    "vision_inputs",
+                    "text_token_counts",
+                    "turn_drafts",
+                    "tool_approvals",
+                ):
+                    self._conn.execute(
+                        f"DELETE FROM {table} WHERE turn_id IN "
+                        "(SELECT id FROM turns WHERE conversation_id=?)",
+                        (conversation_id,),
+                    )
+                for table in ("image_steps", "job_steps", "artifacts"):
+                    self._conn.execute(
+                        f"DELETE FROM {table} WHERE job_id IN "
+                        "(SELECT id FROM jobs WHERE conversation_id=?)",
+                        (conversation_id,),
+                    )
+                self._conn.execute(
+                    "DELETE FROM retrieval_documents WHERE root_id IN "
+                    "(SELECT id FROM retrieval_roots WHERE conversation_id=?)",
+                    (conversation_id,),
+                )
+                self._conn.execute(
+                    "DELETE FROM retrieval_fts WHERE conversation_id=?",
+                    (conversation_id,),
+                )
+                for table in (
+                    "memories",
+                    "retrieval_roots",
+                    "tool_invocations",
+                    "jobs",
+                    "messages",
+                    "turns",
+                    "conversations",
+                ):
+                    column = "id" if table == "conversations" else "conversation_id"
+                    self._conn.execute(
+                        f"DELETE FROM {table} WHERE {column}=?", (conversation_id,)
+                    )
+                self._conn.execute(
+                    "INSERT INTO deleted_conversations VALUES (?,?)",
+                    (conversation_id, _now()),
+                )
+        self._cleanup_deleted_artifacts()
+
+    def _cleanup_deleted_artifacts(self) -> None:
+        for row in self._conn.execute(
+            "SELECT * FROM deleted_artifact_files"
+        ).fetchall():
+            try:
+                path = artifact_path(self.data_dir, row["relative_path"])
+                if path.exists():
+                    path = verify_artifact(
+                        self.data_dir,
+                        row["relative_path"],
+                        row["size_bytes"],
+                        row["sha256"],
+                    )
+                    if not path.resolve().is_relative_to(self.data_dir):
+                        continue
+                    path.unlink()
+            except (OSError, ValueError):
+                # Locked, changed or unsafe files stay queued; never delete an
+                # unverified replacement or invalidate a committed deletion.
+                continue
+            try:
+                with self._transaction():
+                    self._conn.execute(
+                        "DELETE FROM deleted_artifact_files WHERE relative_path=?",
+                        (row["relative_path"],),
+                    )
+            except sqlite3.Error:
+                # A later startup can acknowledge an already removed file.
+                continue
 
     @_on_owner
     def set_conversation_pinned(

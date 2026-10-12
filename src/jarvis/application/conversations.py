@@ -129,6 +129,23 @@ class ConversationService:
     def list_conversations(self) -> list[Conversation]:
         return self.store.list_conversations()
 
+    async def delete(self, conversation_id: str) -> None:
+        try:
+            await self.store.run(
+                lambda: self.store.delete_conversation(conversation_id)
+            )
+        except asyncio.CancelledError:
+            # The owner operation can commit after its caller is cancelled.
+            deleted = await _settle(
+                asyncio.create_task(
+                    self.store.run(
+                        lambda: self.store.is_conversation_deleted(conversation_id)
+                    )
+                )
+            )
+            if not deleted:
+                raise
+
     async def set_pinned(self, conversation_id: str, pinned: bool) -> Conversation:
         try:
             return await self.store.run(

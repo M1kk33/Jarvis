@@ -77,6 +77,15 @@
       <h3>Ход работы</h3><div id="jobs"></div>
     </aside>
   </div>
+  <dialog id="delete-chat-dialog" aria-labelledby="delete-chat-title" aria-describedby="delete-chat-description">
+    <form id="delete-chat-form">
+      <h2 id="delete-chat-title">Удалить диалог?</h2>
+      <p id="delete-chat-name"></p>
+      <p id="delete-chat-description">Сообщения, изображения и статистика этого диалога будут удалены. Отменить удаление нельзя.</p>
+      <p id="delete-chat-status" role="status"></p>
+      <div class="delete-chat-actions"><button id="cancel-delete-chat" type="button" class="quiet" autofocus>Отмена</button><button id="confirm-delete-chat" type="submit" class="danger">Удалить</button></div>
+    </form>
+  </dialog>
   <dialog id="settings-dialog" aria-labelledby="settings-title">
     <form id="settings-form">
       <div class="settings-heading"><h2 id="settings-title">Настройки</h2><button id="close-settings" class="icon-button" type="button" aria-label="Закрыть настройки">×</button></div>

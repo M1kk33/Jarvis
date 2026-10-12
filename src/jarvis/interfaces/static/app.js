@@ -55,6 +55,12 @@ if (setupForm) {
   const regenerationIds = new Map();
   const speakButtons = new Map();
   let regenerating = false;
+  let deleting = false;
+  let deletionTarget = null;
+  const deleteDialog = document.getElementById("delete-chat-dialog");
+  const deleteStatus = document.getElementById("delete-chat-status");
+  const deleteConfirm = document.getElementById("confirm-delete-chat");
+  const deleteCancel = document.getElementById("cancel-delete-chat");
   const conversationsNode = document.getElementById("conversations");
   let conversationRefreshGeneration = 0;
   const messagesNode = document.getElementById("messages");
@@ -669,6 +675,48 @@ if (setupForm) {
     messagesNode.scrollTop = messagesNode.scrollHeight;
   }
 
+  deleteCancel.addEventListener("click", () => { if (!deleting) deleteDialog.close(); });
+  deleteDialog.addEventListener("cancel", (event) => { if (deleting) event.preventDefault(); });
+  document.getElementById("delete-chat-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (deleting || !deletionTarget) return;
+    const target = deletionTarget;
+    deleting = true;
+    deleteConfirm.disabled = deleteCancel.disabled = true;
+    deleteStatus.textContent = "Удаляю…";
+    try {
+      await api(`/api/conversations/${encodeURIComponent(target.id)}`, "DELETE", {});
+    } catch (error) {
+      deleteStatus.textContent = error.message;
+      deleting = false;
+      deleteConfirm.disabled = deleteCancel.disabled = false;
+      return;
+    }
+    // Only committed deletion may clear selection or close its live stream.
+    ++conversationRefreshGeneration;
+    if (state.selected === target.id) {
+      ++messageRefreshGeneration;
+      voicePlayer.stop();
+      if (state.source) state.source.close();
+      state.source = null;
+      state.selected = null;
+      state.fresh = true;
+      state.pending = null;
+      liveDrafts.clear();
+      draftNodes.clear();
+    }
+    deletionTarget = null;
+    deleting = false;
+    deleteConfirm.disabled = deleteCancel.disabled = false;
+    deleteDialog.close();
+    try {
+      await refreshAll();
+      if (!state.selected) inputNode.focus();
+      else conversationsNode.querySelector?.(".conversation-title[aria-current='true']")?.focus();
+      say("Диалог удалён.");
+    } catch (error) { say(`Диалог удалён. Не удалось обновить список: ${error.message}`); }
+  });
+
   async function refreshConversations(focusPin = null, focusId = null) {
     const generation = ++conversationRefreshGeneration;
     const data = await api("/api/conversations");
@@ -719,7 +767,25 @@ if (setupForm) {
       path.setAttribute("d", "M16 9V4l1-1H7l1 1v5l-3 3v2h6v7l2-2v-5h6v-2l-3-3Z");
       icon.append(path);
       pin.append(icon);
-      row.append(item, pin);
+      const remove = button("", () => {
+        if (deleting || document.getElementById("send-button").disabled) return;
+        deletionTarget = conversation;
+        document.getElementById("delete-chat-name").textContent = conversation.title;
+        deleteStatus.textContent = "";
+        deleteDialog.showModal();
+        deleteCancel.focus();
+      });
+      remove.className = "delete-chat";
+      remove.title = "Удалить диалог";
+      remove.setAttribute("aria-label", `Удалить диалог: ${conversation.title}`);
+      const trash = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      trash.setAttribute("viewBox", "0 0 24 24");
+      trash.setAttribute("aria-hidden", "true");
+      const trashPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      trashPath.setAttribute("d", "M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7");
+      trash.append(trashPath);
+      remove.append(trash);
+      row.append(item, pin, remove);
       conversationsNode.append(row);
       if (restorePinFocus && conversation.id === focusId) pin.focus();
     }
@@ -899,6 +965,7 @@ if (setupForm) {
   });
   document.getElementById("send-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (deleting) return;
     if (attachmentPending) { say("Дождитесь подготовки скриншота."); return; }
     voicePlayer.stop();
     const text = inputNode.value;
