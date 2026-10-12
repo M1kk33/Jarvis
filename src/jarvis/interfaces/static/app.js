@@ -111,6 +111,7 @@ if (setupForm) {
     if (event.button !== 0 || !event.isPrimary || sidebarDrag) return;
     event.preventDefault();
     sidebarResizer.setPointerCapture(event.pointerId);
+    sidebarResizer.classList.add("pointer-focus");
     sidebarResizer.focus({ preventScroll: true });
     sidebarDrag = { id: event.pointerId, x: event.clientX, width: resizeSidebar(), previous: sidebarWidth };
     layoutNode.classList.add("sidebar-resizing");
@@ -133,6 +134,7 @@ if (setupForm) {
     resizeSidebar();
   });
   sidebarResizer.addEventListener("keydown", (event) => {
+    sidebarResizer.classList.remove("pointer-focus");
     if (event.key === "Escape" && sidebarDrag) {
       event.preventDefault(); event.stopPropagation(); stopSidebarDrag(true);
     } else if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) && !sidebarDrag) {
@@ -143,6 +145,7 @@ if (setupForm) {
       resizeSidebar();
     }
   });
+  sidebarResizer.addEventListener("blur", () => sidebarResizer.classList.remove("pointer-focus"));
   const sidebarObserver = new ResizeObserver(resizeSidebar);
   sidebarObserver.observe(layoutNode);
   window.addEventListener("blur", () => stopSidebarDrag());

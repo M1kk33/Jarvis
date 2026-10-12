@@ -34,10 +34,9 @@ h3 { margin: 2rem 0 1rem; }
 .layout { display: grid; grid-template-columns: var(--sidebar-width, 226px) minmax(0, 1fr); height: 100dvh; overflow: hidden; }
 .layout:has(.activity:not([hidden])) { grid-template-columns: var(--sidebar-width, 226px) minmax(0, 1fr) 296px; }
 .sidebar { position: relative; display: flex; flex-direction: column; padding: 28px 16px 18px; background: #17191e; border-right: 1px solid var(--line); min-height: 0; min-width: 0; }
-.sidebar-resizer { position: absolute; top: 0; bottom: 0; right: -4px; width: 8px; z-index: 4; cursor: col-resize; touch-action: none; -webkit-app-region: no-drag; app-region: no-drag; }
+.sidebar-resizer { position: absolute; top: 0; bottom: 0; right: -4px; width: 8px; z-index: 4; cursor: col-resize; touch-action: none; outline: none; -webkit-app-region: no-drag; app-region: no-drag; }
 .sidebar-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: transparent; }
-.sidebar-resizer:hover::after, .sidebar-resizer:focus-visible::after, .layout.sidebar-resizing .sidebar-resizer::after { background: var(--accent); }
-.sidebar-resizer:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sidebar-resizer:focus:not(.pointer-focus)::after { background: var(--accent); }
 .layout.sidebar-resizing, .layout.sidebar-resizing * { cursor: col-resize !important; user-select: none !important; }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 650; letter-spacing: -.7px; margin: 0 8px 30px; }
 .brand-mark { display: inline-grid; place-items: center; background: var(--accent); color: var(--accent-ink); width: 31px; height: 34px; border-radius: 10px 10px 10px 3px; font-size: 23px; font-weight: 650; }
