@@ -223,6 +223,12 @@ The fixed native smoke scenario always creates its own temporary data directory,
 - Installed **0.4.7** (MSI exit 0; file version 0.4.7.0); all **2065 shipped files**, excluding regenerable bytecode, matched the build. Installed native smoke passed theme/microphone policy, synthetic stream, chat, window controls and independently verified full child-tree exit (`run/installed-047-actions.json`). The original application reopened with saved history; the small icon row and successful native clipboard write were checked in its real window.
 - Real-data quick check passed. All existing table counts stayed unchanged; read-only hashes confirmed unchanged conversation/message/draft/artifact/preferences and all other tables except `job_steps`. That metadata table's hash changed consistently with the pre-existing startup recovery statement which refreshes unknown-step timestamps; the baseline did not retain field-level hashes for it. Schema history gained only migration 11. No real model request was submitted during verification. Installer: `dist/Jarvis-0.4.7.msi`.
 
+### 0.4.8 clearer regeneration icon
+
+- Redrew the regeneration glyph as two wider arcs with separated arrowheads, keeping the existing 18-pixel icon and compact button geometry.
+- **362 Python tests passed, 3 hardware opt-ins skipped; 52 JavaScript tests passed**. Packaged UI checks passed in dark/light themes at 520/850/1280/1920 pixels; screenshots were inspected. Installed native smoke passed, including verified full child-tree exit (`run/installed-048-icon.json`).
+- Installed **0.4.8** (MSI exit 0; file version 0.4.8.0); all **2065 shipped files**, excluding regenerable bytecode, matched the build. Installer: `dist/Jarvis-0.4.8.msi`. Real-data row hashes/counts, schema and preferences stayed unchanged, excluding the existing startup recovery timestamps in `job_steps.updated_at`; SQLite quick check passed. The original app was reopened.
+
 ## Remaining before a complete out-of-box release
 
 - The offline full archive is implemented. Online delivery, resumable setup, separate capability packs and component upgrades are not implemented. The app-only MSI requires either that archive or an existing configured data folder.
