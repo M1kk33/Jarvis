@@ -511,7 +511,7 @@ if (setupForm) {
           actions.append(speak);
         }
         if (root === latestRoot) {
-          const retry = iconButton("Перегенерировать ответ", "M20 10a8 8 0 0 0-13.7-5.5L3 8m0-5v5h5M4 14a8 8 0 0 0 13.7 5.5L21 16m0 5v-5h-5", async () => {
+          const retry = iconButton("Перегенерировать ответ", "M20 10a8 7 0 0 0-13.7-4.8L3 8m0-4v4h4M4 14a8 7 0 0 0 13.7 4.8L21 16m0 4v-4h-4", async () => {
             if (regenerating || retry.disabled) return;
             regenerating = true;
             retry.disabled = true;

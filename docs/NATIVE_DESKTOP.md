@@ -225,9 +225,9 @@ The fixed native smoke scenario always creates its own temporary data directory,
 
 ### 0.4.8 clearer regeneration icon
 
-- Redrew the regeneration glyph as two wider arcs with separated arrowheads, keeping the existing 18-pixel icon and compact button geometry.
-- **362 Python tests passed, 3 hardware opt-ins skipped; 52 JavaScript tests passed**. Packaged UI checks passed in dark/light themes at 520/850/1280/1920 pixels; screenshots were inspected. Installed native smoke passed, including verified full child-tree exit (`run/installed-048-icon.json`).
-- Installed **0.4.8** (MSI exit 0; file version 0.4.8.0); all **2065 shipped files**, excluding regenerable bytecode, matched the build. Installer: `dist/Jarvis-0.4.8.msi`. Real-data row hashes/counts, schema and preferences stayed unchanged, excluding the existing startup recovery timestamps in `job_steps.updated_at`; SQLite quick check passed. The original app was reopened.
+- Redrew the regeneration glyph as two wider arcs with separated arrowheads, keeping the existing 18-pixel icon and compact button geometry. A small follow-up shortened the arrow stems and lowered the arcs for visually rounder proportions; the version stays 0.4.8.
+- **362 Python tests passed, 3 hardware opt-ins skipped; 52 JavaScript tests passed**. Packaged UI checks passed in dark/light themes at 520/850/1280/1920 pixels; screenshots were inspected. Installed native smoke passed, including verified full child-tree exit (`run/installed-048-icon.json`, follow-up: `run/installed-048-round-icon.json`).
+- Installed **0.4.8** (MSI exit 0; file version 0.4.8.0); all **2065 shipped files**, excluding regenerable bytecode, matched the build. The follow-up uses `dist/Jarvis-0.4.8-round-icon.msi`, retaining the installed product identity/version with a new package identity and an explicit recache/reinstall. Real-data row hashes/counts, schema and preferences stayed unchanged, excluding the existing startup recovery timestamps in `job_steps.updated_at`; SQLite quick check passed. The original app was reopened.
 
 ## Remaining before a complete out-of-box release
 
