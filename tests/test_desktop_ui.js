@@ -11,7 +11,7 @@ const marked = require("../src/jarvis/interfaces/static/marked.umd.js");
 
 function fixture({ vision = false, decode, history, loadHistory, sendShortcut = "enter", conversations: initialConversations = [] } = {}) {
   class Element {
-    constructor() { this.children = []; this.handlers = {}; this.hidden = true; this.value = ""; this.files = []; this.textContent = ""; this.style = {}; this.scrollHeight = 36; this.classList = { add() {}, remove() {} }; }
+    constructor() { this.children = []; this.handlers = {}; this.hidden = true; this.value = ""; this.files = []; this.textContent = ""; this.style = { setProperty(name, value) { this[name] = value; } }; this.scrollHeight = 36; this.clientWidth = 1280; this.classes = new Set(); this.classList = { add: name => this.classes.add(name), remove: name => this.classes.delete(name) }; this.captured = new Set(); }
     get textContent() { return this._text + this.children.map(child => child.textContent).join(""); }
     set textContent(value) { this._text = value; this.children = []; }
     append(...items) { for (const item of items) this.children.push(...(item.fragment ? item.children : [item])); }
@@ -22,6 +22,9 @@ function fixture({ vision = false, decode, history, loadHistory, sendShortcut = 
     focus() { document.activeElement = this; }
     click() { this.clicks = (this.clicks || 0) + 1; this.handlers.click?.(); }
     requestSubmit() { return this.handlers.submit({ preventDefault() {} }); }
+    setPointerCapture(id) { this.captured.add(id); }
+    hasPointerCapture(id) { return this.captured.has(id); }
+    releasePointerCapture(id) { this.captured.delete(id); this.handlers.lostpointercapture?.({ pointerId: id }); }
   }
   const elements = new Map();
   const get = (id) => {
@@ -51,6 +54,7 @@ function fixture({ vision = false, decode, history, loadHistory, sendShortcut = 
     return el;
   }, createDocumentFragment() { const el = new Element(); el.fragment = true; return el; }, createTextNode(text) { const el = new Element(); el.textContent = text; return el; }, createElementNS() { return new Element(); }, addEventListener(name, handler) { handlers[name] = handler; } };
   const windowHandlers = {};
+  const observers = [];
   const window = {
     marked,
     location: { hash: "", pathname: "/", search: "" }, addEventListener(name, handler) { windowHandlers[name] = handler; },
@@ -59,8 +63,8 @@ function fixture({ vision = false, decode, history, loadHistory, sendShortcut = 
     JarvisSettings: class { constructor() { this.preferences = { send_shortcut: sendShortcut }; } async initialize() {} },
   };
   const context = vm.createContext({
-    window, document, URLSearchParams, crypto: { randomUUID }, Blob, File,
-    ResizeObserver: class { observe() {} disconnect() {} },
+    window, document, URLSearchParams, crypto: { randomUUID }, Blob, File, clearTimeout,
+    ResizeObserver: class { constructor(callback) { this.callback = callback; observers.push(this); } observe(target) { this.target = target; } disconnect() { this.disconnected = true; } },
     URL: { createObjectURL: () => "blob:preview", revokeObjectURL: (url) => revoked.push(url) },
     createImageBitmap: decode || (async () => ({ width: 1920, height: 1080, close() {} })),
     FileReader: class {
@@ -103,9 +107,63 @@ function fixture({ vision = false, decode, history, loadHistory, sendShortcut = 
   });
   vm.runInContext(markdownSource, context);
   vm.runInContext(source, context);
-  return { get, requests, handlers, canvases, revoked, sources, focusApp() { return windowHandlers.focus(); }, activeElement() { return document.activeElement; }, failPin(value) { failPin = value; }, setJobs(value) { jobs = value; }, setApprovals(value) { approvals = value; }, failSend(value) { failSend = value; } };
+  return { get, requests, handlers, canvases, revoked, sources, observers, resizeWindow(width) { get("app-layout").clientWidth = width; observers.find(o => o.target === get("app-layout")).callback(); }, blurApp() { windowHandlers.blur(); }, hidePage() { windowHandlers.pagehide(); }, focusApp() { return windowHandlers.focus(); }, activeElement() { return document.activeElement; }, failPin(value) { failPin = value; }, setJobs(value) { jobs = value; }, setApprovals(value) { approvals = value; }, failSend(value) { failSend = value; } };
 }
 const settle = () => new Promise(setImmediate);
+
+test("sidebar dragging captures one pointer, preserves the draft/chat and stops on release, cancellation and blur", async () => {
+  const f = fixture({ conversations: [{ id: "chat", title: "Existing chat" }] });
+  await settle();
+  const handle = f.get("sidebar-resizer"), layout = f.get("app-layout");
+  const pointer = (x, id = 7, button = 0) => ({ clientX: x, pointerId: id, button, isPrimary: true, preventDefault() {} });
+  f.get("message-input").value = "Unsent message";
+  f.get("conversations").scrollTop = 240;
+  handle.handlers.pointerdown(pointer(226, 8, 2));
+  assert.equal(handle.hasPointerCapture(8), false);
+  handle.handlers.pointerdown(pointer(226));
+  assert.equal(handle.hasPointerCapture(7), true);
+  handle.handlers.pointermove(pointer(400, 9));
+  assert.equal(layout.style["--sidebar-width"], "226px");
+  handle.handlers.pointermove(pointer(360));
+  assert.equal(layout.style["--sidebar-width"], "360px");
+  handle.handlers.pointerup(pointer(360));
+  assert.equal(handle.hasPointerCapture(7), false);
+  assert.equal(layout.classes.has("sidebar-resizing"), false);
+  handle.handlers.pointermove(pointer(180));
+  assert.equal(layout.style["--sidebar-width"], "360px");
+  handle.handlers.pointerdown(pointer(360)); handle.handlers.pointermove(pointer(200));
+  handle.handlers.pointercancel(pointer(200));
+  assert.equal(layout.style["--sidebar-width"], "360px");
+  handle.handlers.pointerdown(pointer(360)); handle.handlers.pointermove(pointer(300)); f.blurApp();
+  assert.equal(layout.style["--sidebar-width"], "300px");
+  assert.equal(handle.hasPointerCapture(7), false);
+  assert.equal(f.get("message-input").value, "Unsent message");
+  assert.equal(f.get("conversation-title").textContent, "Existing chat");
+  assert.equal(f.get("conversations").scrollTop, 240);
+  assert.equal(f.requests.some(r => r.method === "POST"), false);
+});
+
+test("sidebar keyboard limits follow the viewport, reset defaults and cancel with Escape", async () => {
+  const f = fixture(); await settle();
+  const handle = f.get("sidebar-resizer"), layout = f.get("app-layout");
+  const key = key => handle.handlers.keydown({ key, preventDefault() {}, stopPropagation() {} });
+  key("End"); assert.equal(layout.style["--sidebar-width"], "420px");
+  f.resizeWindow(520); assert.equal(layout.style["--sidebar-width"], "200px");
+  assert.equal(handle["aria-valuemax"], "200");
+  key("ArrowRight"); assert.equal(layout.style["--sidebar-width"], "200px");
+  key("Home"); assert.equal(layout.style["--sidebar-width"], "150px");
+  key("ArrowLeft"); assert.equal(layout.style["--sidebar-width"], "150px");
+  key("ArrowRight"); assert.equal(layout.style["--sidebar-width"], "160px");
+  handle.handlers.dblclick(); assert.equal(layout.style["--sidebar-width"], "150px");
+  f.resizeWindow(850); assert.equal(layout.style["--sidebar-width"], "210px");
+  const pointer = x => ({ clientX: x, pointerId: 7, button: 0, isPrimary: true, preventDefault() {} });
+  handle.handlers.pointerdown(pointer(210)); handle.handlers.pointermove(pointer(350)); key("Escape");
+  assert.equal(layout.style["--sidebar-width"], "210px");
+  f.resizeWindow(1280); assert.equal(layout.style["--sidebar-width"], "226px");
+  handle.handlers.pointerdown(pointer(226)); f.hidePage();
+  assert.equal(handle.hasPointerCapture(7), false);
+  assert.ok(f.observers.every(o => o.disconnected));
+});
 
 test("compact input caps its height, keeps a failed draft and shrinks after send or reset", async () => {
   const f = fixture();

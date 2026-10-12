@@ -85,6 +85,69 @@ if (setupForm) {
   const attentionNotice = document.getElementById("attention-notice");
   let attentionIds = new Set();
 
+  const layoutNode = document.getElementById("app-layout");
+  const sidebarResizer = document.getElementById("sidebar-resizer");
+  let sidebarWidth = null;
+  let sidebarDrag = null;
+  const sidebarDefault = () => layoutNode.clientWidth <= 700 ? 150 : layoutNode.clientWidth <= 1100 ? 210 : 226;
+  const sidebarMax = () => Math.max(150, Math.min(420, layoutNode.clientWidth - 320));
+  function resizeSidebar() {
+    const width = Math.round(Math.max(150, Math.min(sidebarMax(), sidebarWidth ?? sidebarDefault())));
+    layoutNode.style.setProperty("--sidebar-width", `${width}px`);
+    sidebarResizer.setAttribute("aria-valuenow", String(width));
+    sidebarResizer.setAttribute("aria-valuemax", String(sidebarMax()));
+    return width;
+  }
+  function stopSidebarDrag(cancel = false) {
+    if (!sidebarDrag) return;
+    const drag = sidebarDrag;
+    sidebarDrag = null;
+    if (cancel) sidebarWidth = drag.previous;
+    layoutNode.classList.remove("sidebar-resizing");
+    if (sidebarResizer.hasPointerCapture(drag.id)) sidebarResizer.releasePointerCapture(drag.id);
+    resizeSidebar();
+  }
+  sidebarResizer.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || !event.isPrimary || sidebarDrag) return;
+    event.preventDefault();
+    sidebarResizer.setPointerCapture(event.pointerId);
+    sidebarResizer.focus({ preventScroll: true });
+    sidebarDrag = { id: event.pointerId, x: event.clientX, width: resizeSidebar(), previous: sidebarWidth };
+    layoutNode.classList.add("sidebar-resizing");
+  });
+  sidebarResizer.addEventListener("pointermove", (event) => {
+    if (sidebarDrag?.id !== event.pointerId) return;
+    sidebarWidth = Math.max(150, Math.min(sidebarMax(), sidebarDrag.width + event.clientX - sidebarDrag.x));
+    resizeSidebar();
+  });
+  sidebarResizer.addEventListener("pointerup", (event) => {
+    if (sidebarDrag?.id === event.pointerId) stopSidebarDrag();
+  });
+  sidebarResizer.addEventListener("pointercancel", (event) => {
+    if (sidebarDrag?.id === event.pointerId) stopSidebarDrag(true);
+  });
+  sidebarResizer.addEventListener("lostpointercapture", () => stopSidebarDrag());
+  sidebarResizer.addEventListener("dblclick", () => {
+    stopSidebarDrag();
+    sidebarWidth = null;
+    resizeSidebar();
+  });
+  sidebarResizer.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && sidebarDrag) {
+      event.preventDefault(); event.stopPropagation(); stopSidebarDrag(true);
+    } else if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) && !sidebarDrag) {
+      event.preventDefault();
+      sidebarWidth = event.key === "Home" ? 150 : event.key === "End" ? sidebarMax()
+        : resizeSidebar() + (event.key === "ArrowRight" ? 10 : -10);
+      sidebarWidth = Math.max(150, Math.min(sidebarMax(), sidebarWidth));
+      resizeSidebar();
+    }
+  });
+  const sidebarObserver = new ResizeObserver(resizeSidebar);
+  sidebarObserver.observe(layoutNode);
+  window.addEventListener("blur", () => stopSidebarDrag());
+  resizeSidebar();
+
   function resizeInput() {
     const scrollTop = inputNode.scrollTop;
     inputNode.style.height = "auto";
@@ -832,6 +895,8 @@ if (setupForm) {
     finally { cancelTranscription.disabled = false; cancelTranscription.hidden = true; }
   });
   window.addEventListener("pagehide", () => {
+    stopSidebarDrag();
+    sidebarObserver.disconnect();
     inputObserver.disconnect();
     voicePlayer.stop();
     if (recorder) {

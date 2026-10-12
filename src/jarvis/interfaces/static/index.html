@@ -13,13 +13,14 @@
   <script src="/static/app.js" defer></script>
 </head>
 <body>
-  <div class="layout">
-    <aside class="sidebar">
+  <div id="app-layout" class="layout">
+    <aside id="chat-sidebar" class="sidebar">
       <div class="brand"><span class="brand-mark" aria-hidden="true">J</span> Jarvis</div>
       <button id="new-conversation" class="new-chat" type="button"><span aria-hidden="true">＋</span> Новый диалог</button>
       <h2>Ваши диалоги</h2>
       <nav id="conversations" aria-label="Диалоги"></nav>
       <button id="open-settings" class="settings-launch quiet" type="button" hidden><span aria-hidden="true">⚙</span> Настройки</button>
+      <div id="sidebar-resizer" class="sidebar-resizer" role="separator" tabindex="0" aria-label="Ширина списка диалогов" aria-orientation="vertical" aria-controls="chat-sidebar" aria-valuemin="150" aria-valuemax="420" aria-valuenow="226" title="Потяните, чтобы изменить ширину · двойной щелчок — сброс"></div>
     </aside>
     <main class="chat">
       <header>
