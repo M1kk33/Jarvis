@@ -83,6 +83,12 @@ h3 { margin: 2rem 0 1rem; }
 .suggestions button:hover { border-color: var(--accent-border); background: var(--accent-soft); }
 .message { max-width: 780px; margin: 0 auto 25px; padding: 17px 21px; border-radius: 14px; line-height: 1.75; font-size: var(--chat-text-size, 14px); }
 .message.assistant { padding-left: 0; padding-right: 0; }
+.reply-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; margin-top: 10px; }
+.reply-actions .reply-action { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; min-width: 30px; padding: 6px; border: 0; border-radius: 7px; color: var(--muted); }
+.reply-action svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.reply-actions .reply-action[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+.reply-version, .reply-feedback { color: var(--muted); font-size: 12px; }
+.reply-feedback { margin-left: 6px; }
 .message.user { background: var(--message-background); border: 1px solid var(--message-border); }
 .message .role { font-size: 11px; font-weight: 600; color: var(--accent); letter-spacing: .03em; margin-bottom: 9px; }
 .message .turn-status { display: block; padding: 0; border: 0; background: transparent; text-align: left; font-weight: 400; }

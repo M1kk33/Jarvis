@@ -69,6 +69,10 @@ class _Send(_Input):
     submission_id: str = Field(min_length=1, max_length=200)
 
 
+class _Regenerate(_Input):
+    submission_id: str = Field(min_length=1, max_length=200)
+
+
 class _VisionSend(_Input):
     question: str = Field(min_length=1, max_length=1024)
     submission_id: str = Field(min_length=1, max_length=200)
@@ -474,6 +478,20 @@ def create_web_app(
         supplied = await _body(request, _Send)
         job, duplicate = await runner.submit(
             conversation_id, supplied.text, supplied.submission_id
+        )
+        if not duplicate and job.status is JobStatus.QUEUED:
+            runner.launch(job.id)
+        return JSONResponse(
+            {"job": _job(job), "duplicate": duplicate},
+            status_code=200 if duplicate else 202,
+        )
+
+    @app.post("/api/conversations/{conversation_id}/turns/{turn_id}/regenerate")
+    async def regenerate(request: Request, conversation_id: str, turn_id: str):
+        authorize(request, mutate=True)
+        supplied = await _body(request, _Regenerate)
+        job, duplicate = await runner.regenerate(
+            conversation_id, turn_id, supplied.submission_id
         )
         if not duplicate and job.status is JobStatus.QUEUED:
             runner.launch(job.id)

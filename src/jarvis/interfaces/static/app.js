@@ -51,6 +51,10 @@ if (setupForm) {
   const turnStatusNodes = new Map();
   const draftNodes = new Map();
   const liveDrafts = new Map();
+  const replyVersions = new Map();
+  const regenerationIds = new Map();
+  const speakButtons = new Map();
+  let regenerating = false;
   const conversationsNode = document.getElementById("conversations");
   let conversationRefreshGeneration = 0;
   const messagesNode = document.getElementById("messages");
@@ -401,7 +405,15 @@ if (setupForm) {
         "Only a completed assistant reply can be spoken": "Можно озвучить только завершённый ответ." })[message]
         ?? message.replace(/Preparing voice (\d+) of (\d+)…/, "Готовлю озвучивание $1 из $2…").replace(/Speaking (\d+) of (\d+)…/, "Озвучивание $1 из $2…");
     },
-    onActive: (active) => { stopVoiceButton.hidden = !active; },
+    onActive: (active) => {
+      stopVoiceButton.hidden = !active;
+      for (const [id, item] of speakButtons) {
+        const playing = active && voicePlayer.active?.messageId === id;
+        item.title = playing ? "Остановить озвучивание" : "Озвучить";
+        item.setAttribute("aria-label", item.title);
+        item.setAttribute("aria-pressed", String(Boolean(playing)));
+      }
+    },
   });
 
   const settings = new window.JarvisSettings({ api, onApply: (preferences) => {
@@ -418,6 +430,7 @@ if (setupForm) {
       messagesNode.replaceChildren();
       turnStatusNodes.clear();
       draftNodes.clear();
+      speakButtons.clear();
       welcome();
       return;
     }
@@ -433,12 +446,118 @@ if (setupForm) {
     messagesNode.replaceChildren();
     turnStatusNodes.clear();
     draftNodes.clear();
+    speakButtons.clear();
     if (!data.messages.length) welcome();
     const turns = new Map(data.turns.map((turn) => [turn.id, turn]));
     for (const turn of data.turns) {
       if (turn.status === "complete") liveDrafts.delete(turn.id);
     }
     const drafts = new Map(data.drafts.map((draft) => [draft.turn_id, draft]));
+    const groups = new Map();
+    for (const turn of data.turns) {
+      const root = turn.regeneration_of || turn.id;
+      if (!groups.has(root)) groups.set(root, []);
+      groups.get(root).push(turn);
+    }
+    const latestRoot = [...groups.keys()].at(-1);
+    const visibleTurns = new Set();
+    for (const [root, versions] of groups) {
+      const latest = versions.at(-1).id;
+      const choice = replyVersions.get(root);
+      const selected = choice?.latest === latest && versions.some(t => t.id === choice.selected) ? choice.selected : latest;
+      replyVersions.set(root, { latest, selected });
+      visibleTurns.add(selected);
+    }
+    const busy = regenerating || data.turns.some(t => t.status === "pending") || [...jobUpdates.values()].some(job =>
+      job.conversation_id === selected && !["succeeded", "failed", "cancelled"].includes(job.status));
+    function iconButton(label, pathData, action) {
+      const item = button("", action, true);
+      item.className = "quiet reply-action";
+      item.title = label;
+      item.setAttribute("aria-label", label);
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("aria-hidden", "true");
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", pathData);
+      svg.append(path);
+      item.append(svg);
+      return item;
+    }
+    function appendReplyActions(card, turn, message = null) {
+      const root = turn.regeneration_of || turn.id;
+      const versions = groups.get(root);
+      const actions = document.createElement("div");
+      actions.className = "reply-actions";
+      const feedback = document.createElement("span");
+      feedback.className = "reply-feedback";
+      feedback.setAttribute("role", "status");
+      if (message && turn.status === "complete") {
+        const copy = iconButton("Копировать ответ", "M9 5V3h11v13h-3M4 8h11v13H4z", async () => {
+          try {
+            await navigator.clipboard.writeText(message.text);
+            feedback.textContent = "Скопировано";
+          } catch (_) { feedback.textContent = "Не удалось скопировать. Выделите текст и нажмите Ctrl+C."; }
+        });
+        actions.append(copy);
+        if (state.spokenEnabled) {
+          const playing = voicePlayer.isPlaying(selected, turn.id, message.id);
+          const speak = iconButton(playing ? "Остановить озвучивание" : "Озвучить", "M11 4 5 9H2v6h3l6 5zM15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14", () => {
+            if (voicePlayer.isPlaying(selected, turn.id, message.id)) voicePlayer.stop();
+            else voicePlayer.play(selected, turn.id, message.id);
+          });
+          speak.setAttribute("aria-pressed", String(playing));
+          speakButtons.set(message.id, speak);
+          actions.append(speak);
+        }
+        if (root === latestRoot) {
+          const retry = iconButton("Перегенерировать ответ", "M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1", async () => {
+            if (regenerating || retry.disabled) return;
+            regenerating = true;
+            retry.disabled = true;
+            voicePlayer.stop();
+            say("");
+            const key = `${selected}/${turn.id}`;
+            if (!regenerationIds.has(key)) regenerationIds.set(key, crypto.randomUUID());
+            try {
+              const result = await api(`/api/conversations/${encodeURIComponent(selected)}/turns/${encodeURIComponent(turn.id)}/regenerate`, "POST", { submission_id: regenerationIds.get(key) });
+              regenerationIds.delete(key);
+              if (state.selected === selected) {
+                await refreshAll();
+                listen(result.job.id);
+              }
+            } catch (error) { say(error.message); }
+            finally {
+              regenerating = false;
+              if (state.selected === selected) await refreshConversation();
+            }
+          });
+          retry.disabled = busy;
+          actions.append(retry);
+        }
+      }
+      if (versions.length > 1) {
+        const index = versions.findIndex(version => version.id === turn.id);
+        const move = async offset => {
+          voicePlayer.stop();
+          replyVersions.set(root, { latest: versions.at(-1).id, selected: versions[index + offset].id });
+          await refreshConversation();
+        };
+        const previous = iconButton("Предыдущая версия ответа", "m14 6-6 6 6 6", () => move(-1));
+        const next = iconButton("Следующая версия ответа", "m10 6 6 6-6 6", () => move(1));
+        previous.disabled = index === 0;
+        next.disabled = index === versions.length - 1;
+        const counter = document.createElement("span");
+        counter.className = "reply-version";
+        counter.textContent = `${index + 1} / ${versions.length}`;
+        counter.setAttribute("aria-label", `Версия ответа ${index + 1} из ${versions.length}`);
+        actions.append(previous, counter, next);
+        counter.title = "Просмотр сохранённых версий. Для продолжения используется последняя завершённая версия.";
+        if (index < versions.length - 1) feedback.textContent = "Просмотр прежней версии";
+      }
+      actions.append(feedback);
+      card.append(actions);
+    }
     const artifacts = new Map();
     for (const artifact of data.artifacts || []) {
       if (!artifacts.has(artifact.turn_id)) artifacts.set(artifact.turn_id, []);
@@ -467,6 +586,7 @@ if (setupForm) {
       return rendered;
     }
     for (const message of data.messages) {
+      if (!visibleTurns.has(message.turn_id)) continue;
       const card = document.createElement("article");
       card.className = `message ${message.role}`;
       line(card, message.role === "user" ? "Вы" : "Jarvis", "role");
@@ -476,13 +596,6 @@ if (setupForm) {
         window.JarvisMarkdown.render(content, message.text);
       } else content.textContent = message.text;
       card.append(content);
-      if (state.spokenEnabled && message.role === "assistant"
-          && turns.get(message.turn_id)?.status === "complete") {
-        card.append(button("Озвучить", () => {
-          if (voicePlayer.isPlaying(state.selected, message.turn_id, message.id)) voicePlayer.stop();
-          else voicePlayer.play(state.selected, message.turn_id, message.id);
-        }, true));
-      }
       if (message.role === "user") {
         for (const item of (data.invocations || []).filter((item) => item.turn_id === message.turn_id)) {
           let toolResult;
@@ -526,6 +639,7 @@ if (setupForm) {
         appendArtifacts(card, message.turn_id, "screenshot/png");
       } else if (message.role === "assistant") {
         appendArtifacts(card, message.turn_id, "image/png");
+        appendReplyActions(card, turns.get(message.turn_id), message);
       }
       messagesNode.append(card);
       const turn = turns.get(message.turn_id);
@@ -544,7 +658,10 @@ if (setupForm) {
         }
         // A committed image belongs to Jarvis even before text arrives or after failure.
         const hasArtifacts = appendArtifacts(partial, turn.id, "image/png");
-        partial.hidden = !draftText && !hasArtifacts;
+        const hasVersions = groups.get(turn.regeneration_of || turn.id).length > 1;
+        if (hasVersions && !draftText && !hasArtifacts) line(partial, turn.status === "pending" ? "Готовлю новую версию ответа…" : "Новая версия не завершена. Прежний ответ сохранён.", "subtle");
+        appendReplyActions(partial, turn);
+        partial.hidden = !draftText && !hasArtifacts && !hasVersions;
         draftNodes.set(turn.id, { card: partial, content, hasArtifacts });
         messagesNode.append(partial);
       }

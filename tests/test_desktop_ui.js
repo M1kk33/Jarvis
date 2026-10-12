@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.join(__dirname, "../src/jarvis/interfaces/st
 const markdownSource = fs.readFileSync(path.join(__dirname, "../src/jarvis/interfaces/static/markdown.js"), "utf8");
 const marked = require("../src/jarvis/interfaces/static/marked.umd.js");
 
-function fixture({ vision = false, decode, history, loadHistory, sendShortcut = "enter", conversations: initialConversations = [] } = {}) {
+function fixture({ vision = false, spoken = false, clipboard, regenerate, decode, history, loadHistory, sendShortcut = "enter", conversations: initialConversations = [] } = {}) {
   class Element {
     constructor() { this.children = []; this.handlers = {}; this.hidden = true; this.value = ""; this.files = []; this.textContent = ""; this.style = { setProperty(name, value) { this[name] = value; } }; this.scrollHeight = 36; this.clientWidth = 1280; this.classes = new Set(); this.classList = { add: name => this.classes.add(name), remove: name => this.classes.delete(name) }; this.captured = new Set(); }
     get textContent() { return this._text + this.children.map(child => child.textContent).join(""); }
@@ -43,6 +43,7 @@ function fixture({ vision = false, decode, history, loadHistory, sendShortcut = 
   const handlers = {};
   const canvases = [];
   const revoked = [];
+  const voiceCalls = [];
   const document = { getElementById: get, createElement: (tag) => {
     const el = new Element();
     el.tagName = tag;
@@ -59,11 +60,17 @@ function fixture({ vision = false, decode, history, loadHistory, sendShortcut = 
     marked,
     location: { hash: "", pathname: "/", search: "" }, addEventListener(name, handler) { windowHandlers[name] = handler; },
     getComputedStyle() { return { minHeight: "36px", maxHeight: "156px" }; },
-    JarvisVoicePlayer: class { stop() {} setVolume() {} },
+    JarvisVoicePlayer: class {
+      constructor(options) { this.options = options; }
+      isPlaying(conversationId, turnId, messageId) { return this.active?.messageId === messageId && this.active?.turnId === turnId && this.active?.conversationId === conversationId; }
+      play(conversationId, turnId, messageId) { this.active = { conversationId, turnId, messageId }; voiceCalls.push(this.active); this.options.onActive(true); }
+      stop() { this.active = null; this.options.onActive(false); }
+      setVolume() {}
+    },
     JarvisSettings: class { constructor() { this.preferences = { send_shortcut: sendShortcut }; } async initialize() {} },
   };
   const context = vm.createContext({
-    window, document, URLSearchParams, crypto: { randomUUID }, Blob, File, clearTimeout,
+    window, document, navigator: { clipboard }, URLSearchParams, crypto: { randomUUID }, Blob, File, clearTimeout,
     ResizeObserver: class { constructor(callback) { this.callback = callback; observers.push(this); } observe(target) { this.target = target; } disconnect() { this.disconnected = true; } },
     URL: { createObjectURL: () => "blob:preview", revokeObjectURL: (url) => revoked.push(url) },
     createImageBitmap: decode || (async () => ({ width: 1920, height: 1080, close() {} })),
@@ -80,7 +87,7 @@ function fixture({ vision = false, decode, history, loadHistory, sendShortcut = 
       requests.push({ url, method: options.method, payload });
       let value;
       let ok = true;
-      if (url === "/api/session") value = { csrf_token: "test", speech_enabled: false, vision_enabled: vision };
+      if (url === "/api/session") value = { csrf_token: "test", speech_enabled: false, spoken_enabled: spoken, vision_enabled: vision };
       else if (url === "/api/conversations" && options.method === "POST") {
         value = { id: `conversation-${++createdConversations}`, title: payload.title };
         conversations = [value, ...conversations];
@@ -95,6 +102,10 @@ function fixture({ vision = false, decode, history, loadHistory, sendShortcut = 
       }
       else if (url === "/api/jobs") value = { jobs };
       else if (url === "/api/approvals") value = approvals;
+      else if (url.endsWith("/regenerate")) {
+        value = regenerate ? await regenerate(payload) : { job: { id: "job-regenerated" } };
+        ok = !value.detail;
+      }
       else if (url.endsWith("/messages") || url.endsWith("/vision")) {
         value = failSend ? { detail: "Try again" } : { job: { id: "job-1" } };
         ok = !failSend;
@@ -107,9 +118,109 @@ function fixture({ vision = false, decode, history, loadHistory, sendShortcut = 
   });
   vm.runInContext(markdownSource, context);
   vm.runInContext(source, context);
-  return { get, requests, handlers, canvases, revoked, sources, observers, resizeWindow(width) { get("app-layout").clientWidth = width; observers.find(o => o.target === get("app-layout")).callback(); }, blurApp() { windowHandlers.blur(); }, hidePage() { windowHandlers.pagehide(); }, focusApp() { return windowHandlers.focus(); }, activeElement() { return document.activeElement; }, failPin(value) { failPin = value; }, setJobs(value) { jobs = value; }, setApprovals(value) { approvals = value; }, failSend(value) { failSend = value; } };
+  return { get, requests, handlers, canvases, revoked, sources, observers, voiceCalls, resizeWindow(width) { get("app-layout").clientWidth = width; observers.find(o => o.target === get("app-layout")).callback(); }, blurApp() { windowHandlers.blur(); }, hidePage() { windowHandlers.pagehide(); }, focusApp() { return windowHandlers.focus(); }, activeElement() { return document.activeElement; }, failPin(value) { failPin = value; }, setJobs(value) { jobs = value; }, setApprovals(value) { approvals = value; }, failSend(value) { failSend = value; } };
 }
 const settle = () => new Promise(setImmediate);
+
+const replyHistory = () => ({ turns: [{ id: "turn", status: "complete" }], messages: [
+  { id: "user", turn_id: "turn", role: "user", text: "Question" },
+  { id: "answer", turn_id: "turn", role: "assistant", text: "**Bold**\n\n```js\n1 < 2\n```" },
+], drafts: [] });
+function findAction(f, label) {
+  const visit = node => node["aria-label"] === label ? node : node.children.map(visit).find(Boolean);
+  return visit(f.get("messages"));
+}
+
+test("reply actions use compact accessible icons and copy committed raw Markdown with failure feedback", async () => {
+  const copied = [];
+  let denied = false;
+  const f = fixture({ conversations: [{ id: "chat", title: "Chat" }], history: replyHistory(), clipboard: { async writeText(text) { if (denied) throw new Error(); copied.push(text); } } });
+  await settle();
+  const copy = findAction(f, "Копировать ответ");
+  assert.equal(copy.textContent, "");
+  assert.match(copy.className, /reply-action/);
+  assert.equal(copy.children[0]["aria-hidden"], "true");
+  assert.equal(findAction(f, "Озвучить"), undefined);
+  await copy.handlers.click();
+  assert.deepEqual(copied, [replyHistory().messages[1].text]);
+  assert.match(f.get("messages").textContent, /Скопировано/);
+  denied = true;
+  await copy.handlers.click();
+  assert.match(f.get("messages").textContent, /Не удалось скопировать/);
+  assert.equal(f.requests.some(r => r.method === "POST"), false);
+});
+
+test("speaker icon toggles the existing player and keeps its pressed/stop label through refresh", async () => {
+  const f = fixture({ spoken: true, conversations: [{ id: "chat", title: "Chat" }], history: replyHistory() });
+  await settle();
+  const speak = findAction(f, "Озвучить");
+  speak.handlers.click();
+  assert.equal(speak["aria-pressed"], "true");
+  assert.equal(speak["aria-label"], "Остановить озвучивание");
+  assert.equal(f.voiceCalls.length, 1);
+  assert.equal(f.voiceCalls[0].messageId, "answer");
+  await f.focusApp();
+  const active = findAction(f, "Остановить озвучивание");
+  assert.equal(active["aria-pressed"], "true");
+  active.handlers.click();
+  assert.equal(active["aria-label"], "Озвучить");
+  assert.equal(active["aria-pressed"], "false");
+  assert.equal(f.voiceCalls.length, 1);
+});
+
+test("regeneration keeps retry identity, rejects double click and preserves unsent input", async () => {
+  let failed = true;
+  const history = replyHistory();
+  const f = fixture({ conversations: [{ id: "chat", title: "Chat" }], history, regenerate: async () => {
+    if (failed) return { detail: "Try again" };
+    history.turns.push({ id: "version", status: "pending", regeneration_of: "turn" });
+    history.messages.push({ id: "user-version", turn_id: "version", role: "user", text: "Question" });
+    return { job: { id: "job-version" } };
+  } });
+  await settle();
+  f.get("message-input").value = "Unsent draft";
+  const retry = findAction(f, "Перегенерировать ответ");
+  const first = retry.handlers.click();
+  await retry.handlers.click();
+  await first;
+  assert.equal(f.requests.filter(r => r.url.endsWith("/regenerate")).length, 1);
+  failed = false;
+  await findAction(f, "Перегенерировать ответ").handlers.click();
+  const calls = f.requests.filter(r => r.url.endsWith("/regenerate"));
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].payload.submission_id, calls[1].payload.submission_id);
+  assert.equal(calls[1].url, "/api/conversations/chat/turns/turn/regenerate");
+  assert.equal(f.get("message-input").value, "Unsent draft");
+  assert.equal(f.sources.length, 1);
+  assert.equal(f.get("messages").children.filter(c => c.className === "message user").length, 1);
+  assert.match(f.get("messages").textContent, /Готовлю новую версию ответа/);
+  await findAction(f, "Предыдущая версия ответа").handlers.click();
+  assert.match(f.get("messages").textContent, /Bold/);
+  assert.equal(findAction(f, "Перегенерировать ответ").disabled, true);
+});
+
+test("failed versions retain drafts and pager selection while old replies have no regeneration action", async () => {
+  const history = replyHistory();
+  history.turns.push({ id: "version", status: "failed", regeneration_of: "turn" });
+  history.messages.push({ id: "user-version", turn_id: "version", role: "user", text: "Question" });
+  history.drafts.push({ turn_id: "version", text: "Partial version" });
+  const f = fixture({ conversations: [{ id: "chat", title: "Chat" }], history });
+  await settle();
+  assert.match(f.get("messages").textContent, /Partial version/);
+  assert.equal(findAction(f, "Копировать ответ"), undefined);
+  await findAction(f, "Предыдущая версия ответа").handlers.click();
+  await f.focusApp();
+  assert.match(f.get("messages").textContent, /Bold/);
+  await findAction(f, "Следующая версия ответа").handlers.click();
+  assert.match(f.get("messages").textContent, /Partial version/);
+  history.turns.push({ id: "next", status: "complete" });
+  history.messages.push({ id: "next-user", turn_id: "next", role: "user", text: "Next" }, { id: "next-answer", turn_id: "next", role: "assistant", text: "Latest reply" });
+  await f.focusApp();
+  await findAction(f, "Предыдущая версия ответа").handlers.click();
+  const actions = f.get("messages").children.filter(c => c.className === "message assistant").map(c => c.children.at(-1));
+  assert.equal(actions[0].children.some(c => c["aria-label"] === "Перегенерировать ответ"), false);
+  assert.equal(actions[1].children.some(c => c["aria-label"] === "Перегенерировать ответ"), true);
+});
 
 test("sidebar dragging captures one pointer, preserves the draft/chat and stops on release, cancellation and blur", async () => {
   const f = fixture({ conversations: [{ id: "chat", title: "Existing chat" }] });

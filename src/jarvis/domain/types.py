@@ -120,6 +120,8 @@ class Turn:
     status: TurnStatus
     created_at: str
     error_code: str | None
+    regeneration_of: str | None = None
+    regeneration_source: str | None = None
 
 
 @dataclass(frozen=True)

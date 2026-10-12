@@ -248,6 +248,7 @@ class SqliteStore:
             (8, "008_tool_acknowledgements.sql"),
             (9, "009_conversation_pins.sql"),
             (10, "010_preferences.sql"),
+            (11, "011_reply_versions.sql"),
         ):
             script = (
                 resources.files("jarvis")
@@ -423,6 +424,8 @@ class SqliteStore:
             TurnStatus(row["status"]),
             row["created_at"],
             row["error_code"],
+            row["regeneration_of"],
+            row["regeneration_source"],
         )
 
     @staticmethod
@@ -523,7 +526,14 @@ class SqliteStore:
         if not 1 <= limit_turns <= 32:
             raise ValueError("Context page size must be 1–32 turns")
         rows = self._conn.execute(
-            "SELECT id, position FROM turns WHERE conversation_id=? "
+            "WITH versions AS ("
+            "SELECT t.id, root.position, ROW_NUMBER() OVER ("
+            "PARTITION BY root.id ORDER BY "
+            "CASE WHEN t.regeneration_of IS NULL OR t.status IN ('complete', 'pending') "
+            "THEN 1 ELSE 0 END DESC, t.position DESC) AS choice "
+            "FROM turns t JOIN turns root ON root.id=COALESCE(t.regeneration_of, t.id) "
+            "WHERE t.conversation_id=?) "
+            "SELECT id, position FROM versions WHERE choice=1 "
             "AND (? IS NULL OR position < ?) ORDER BY position DESC LIMIT ?",
             (conversation_id, before_position, before_position, limit_turns),
         ).fetchall()
@@ -533,8 +543,9 @@ class SqliteStore:
         placeholders = ",".join("?" for _ in ids)
         messages = self._conn.execute(
             "SELECT m.*, t.status AS turn_status FROM messages m "
-            f"JOIN turns t ON t.id=m.turn_id WHERE m.turn_id IN ({placeholders}) "
-            "ORDER BY t.position, m.position",
+            "JOIN turns t ON t.id=m.turn_id "
+            "JOIN turns root ON root.id=COALESCE(t.regeneration_of, t.id) "
+            f"WHERE m.turn_id IN ({placeholders}) ORDER BY root.position, m.position",
             ids,
         ).fetchall()
         return [self._message(row) for row in messages], rows[-1]["position"]
@@ -1547,6 +1558,7 @@ class SqliteStore:
         job_id: str | None = None,
         profile_name: str = "fake",
         vision: VisionInput | None = None,
+        regeneration_source: str | None = None,
     ) -> tuple[Turn, bool]:
         if vision is not None and job_id is None:
             raise ValueError("Vision submission requires a durable job")
@@ -1567,6 +1579,8 @@ class SqliteStore:
                 (conversation_id, submission_id),
             ).fetchone()
             if prior is not None:
+                if prior["regeneration_source"] != regeneration_source:
+                    raise SubmissionConflict("Submission ID belongs to another action")
                 if json.loads(prior["content_json"])[0]["text"] != text:
                     raise SubmissionConflict(
                         "Submission ID was already used with different text"
@@ -1584,6 +1598,40 @@ class SqliteStore:
                         "Submission ID was already used with a different screenshot"
                     )
                 return self._turn(prior), False
+            regeneration_of = None
+            if regeneration_source is not None:
+                if job_id is None:
+                    raise ValueError("Regeneration requires a durable job")
+                source = self.get_turn(regeneration_source)
+                if (
+                    source.conversation_id != conversation_id
+                    or source.status is not TurnStatus.COMPLETE
+                    or self.get_answer(source.id) is None
+                    or self.get_user_message(source.id).text != text
+                ):
+                    raise SubmissionConflict(
+                        "Only a completed reply can be regenerated"
+                    )
+                regeneration_of = source.regeneration_of or source.id
+                latest = self._conn.execute(
+                    "SELECT id FROM turns WHERE conversation_id=? "
+                    "AND regeneration_of IS NULL ORDER BY position DESC LIMIT 1",
+                    (conversation_id,),
+                ).fetchone()
+                if latest is None or latest["id"] != regeneration_of:
+                    raise SubmissionConflict("Only the last reply can be regenerated")
+                source_vision = self.get_vision_input(source.id)
+                if (source_vision is None) != (vision is None) or (
+                    source_vision is not None
+                    and vision is not None
+                    and (
+                        source_vision.sha256 != vision.sha256
+                        or not same_profile_identity(
+                            source_vision.profile_name, vision.profile_name
+                        )
+                    )
+                ):
+                    raise SubmissionConflict("Regeneration screenshot differs")
             active = self._conn.execute(
                 "SELECT 1 FROM turns WHERE conversation_id=? AND status='pending' "
                 "UNION SELECT 1 FROM tool_invocations WHERE conversation_id=? "
@@ -1623,11 +1671,13 @@ class SqliteStore:
                 TurnStatus.PENDING,
                 _now(),
                 None,
+                regeneration_of,
+                regeneration_source,
             )
             self._conn.execute(
                 "INSERT INTO turns "
-                "(id, conversation_id, position, submission_id, status, created_at, error_code) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "(id, conversation_id, position, submission_id, status, created_at, error_code, "
+                "regeneration_of, regeneration_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     turn.id,
                     turn.conversation_id,
@@ -1636,6 +1686,8 @@ class SqliteStore:
                     turn.status.value,
                     turn.created_at,
                     turn.error_code,
+                    turn.regeneration_of,
+                    turn.regeneration_source,
                 ),
             )
             self._conn.execute(

@@ -73,7 +73,11 @@ class JobRunner:
                     self.store.get_vision_input(prior.id),
                 )
             )
-            if user.text != text or vision is not None:
+            if (
+                user.text != text
+                or vision is not None
+                or prior.regeneration_source is not None
+            ):
                 raise SubmissionConflict("Submission ID already has different input")
             turn = prior
             created = False
@@ -121,7 +125,8 @@ class JobRunner:
         if prior is not None:
             turn, user, source, existing_job = prior
             if (
-                user.text != question
+                turn.regeneration_source is not None
+                or user.text != question
                 or source is None
                 or source.sha256 != digest
                 or not same_profile_identity(
@@ -160,7 +165,8 @@ class JobRunner:
                 )
             )
             if (
-                stored is None
+                prior.regeneration_source is not None
+                or stored is None
                 or user.text != question
                 or stored.sha256 != attachment.sha256
                 or not same_profile_identity(
@@ -174,6 +180,81 @@ class JobRunner:
         job = await self.store.run(lambda: self.store.get_job_by_turn(turn.id))
         if job is None:
             raise SubmissionConflict("Screenshot submission has no durable job")
+        return job, not created
+
+    async def regenerate(
+        self, conversation_id: str, source_turn_id: str, submission_id: str
+    ) -> tuple[Job, bool]:
+        """Keep every version; a fresh turn replaces only the last prompt's context."""
+
+        def inspect():
+            source = self.store.get_turn(source_turn_id)
+            if (
+                source.conversation_id != conversation_id
+                or self.store.get_answer(source.id) is None
+            ):
+                raise SubmissionConflict("Only a completed reply can be regenerated")
+            prior = self.conversations.store.get_turn_by_submission(
+                conversation_id, submission_id
+            )
+            if prior is not None:
+                if prior.regeneration_source != source_turn_id:
+                    raise SubmissionConflict("Submission ID belongs to another action")
+                job = self.store.get_job_by_turn(prior.id)
+                if job is None:
+                    raise SubmissionConflict("Regeneration has no durable job")
+                return source, self.store.get_user_message(source.id), None, job
+            return (
+                source,
+                self.store.get_user_message(source.id),
+                self.store.get_vision_input(source.id),
+                None,
+            )
+
+        source, user, vision, prior_job = await self.store.run(inspect)
+        if prior_job is not None:
+            return prior_job, True
+        job_id = str(uuid4())
+        attachment = None
+        profile_name = self.profile_identity
+        if vision is not None:
+            if self.vision is None or not same_profile_identity(
+                vision.profile_name, self.vision.profile_identity
+            ):
+                raise RequestFailure("unsupported_capability", "Vision profile changed")
+            image = await self.store.run(
+                lambda: self.store.get_artifact_bytes(vision.artifact_id)
+            )
+            attachment = await self.vision.stage(job_id, image)
+            profile_name = self.vision.profile_identity
+        try:
+            turn, created = await self.store.run(
+                lambda: self.store.begin_turn(
+                    conversation_id,
+                    user.text,
+                    submission_id,
+                    job_id,
+                    profile_name,
+                    attachment,
+                    source.id,
+                )
+            )
+        except asyncio.CancelledError:
+            prior = await self.conversations.store.run(
+                lambda: self.conversations.store.get_turn_by_submission(
+                    conversation_id, submission_id
+                )
+            )
+            if prior is None:
+                raise
+            if prior.regeneration_source != source.id:
+                raise SubmissionConflict("Regeneration outcome differs") from None
+            turn, created = prior, False
+        job = await self.store.run(lambda: self.store.get_job_by_turn(turn.id))
+        if job is None:
+            raise SubmissionConflict("Regeneration has no durable job")
+        if created:
+            self._diagnostics("job_queued", {"job_id": job.id, "turn_id": turn.id})
         return job, not created
 
     def launch(
