@@ -11,36 +11,43 @@ function fixture() {
   let focused;
   const get = id => {
     if (!elements.has(id)) elements.set(id, {
-      value: "", textContent: "", hidden: false, handlers: {}, dataset: {}, style: { setProperty(key, value) { this[key] = value; } },
+      value: "", textContent: "", hidden: false, handlers: {}, dataset: {}, style: { setProperty(key, value) { this[key] = value; } }, children: [],
+      replaceChildren(...children) { this.children = children; },
       addEventListener(name, handler) { this.handlers[name] = handler; },
       setAttribute(key, value) { this[key] = value; },
       showModal() { this.open = true; }, close() { this.open = false; this.handlers.close?.(); }, focus() { focused = this; },
     });
     return elements.get(id);
   };
-  const tabs = ["appearance", "voice", "model"].map(id => { const el = get(`tab-${id}`); el.dataset.settingsTab = id; return el; });
-  const pages = ["appearance", "voice", "model"].map(id => { const el = get(`page-${id}`); el.dataset.settingsPage = id; return el; });
+  const tabs = ["appearance", "voice", "model", "statistics"].map(id => { const el = get(`tab-${id}`); el.dataset.settingsTab = id; return el; });
+  const pages = ["appearance", "voice", "model", "statistics"].map(id => { const el = get(`page-${id}`); el.dataset.settingsPage = id; return el; });
   const root = get("root");
   const media = { matches: false, addEventListener(name, handler) { this.handler = handler; } };
   const window = { matchMedia: () => media };
-  const document = { getElementById: get, documentElement: root, querySelectorAll: selector => selector === "[data-settings-tab]" ? tabs : pages };
+  const document = { getElementById: get, createElement: () => ({ value: "", textContent: "" }), documentElement: root, querySelectorAll: selector => selector === "[data-settings-tab]" ? tabs : pages };
   vm.runInNewContext(source, { window, document });
   let saved = { theme: "dark", accent: "mint", text_size: 14, send_shortcut: "enter", voice_volume: 80, output_tokens: 2048 };
   let fail = false;
   let deferRead;
   const applied = [];
   const writes = [];
+  const requests = [];
+  let statistics = { conversations: 2, user_messages: 3, assistant_messages: 4, input_tokens: 20, output_tokens: null, counted_user_messages: 1, counted_assistant_messages: 0, regenerations: 1, generated_images: 2, failed_turns: 1, interrupted_turns: 2, pending_turns: 0, first_message_at: null, last_message_at: null };
   const result = () => ({ preferences: { ...saved }, model_name: "Qwen installed", context_tokens: 4096, active_output_tokens: 2048, restart_required: saved.output_tokens !== 2048 });
   const settings = new window.JarvisSettings({
     api: async (_url, method, preferences) => {
+      requests.push(_url);
       if (fail) throw new Error("Cannot save");
+      if (_url === "/api/conversations") return { conversations: [{ id: "old", title: "<img onerror=bad()>" }, { id: "current", title: "Now" }] };
+      if (_url.startsWith("/api/statistics")) return statistics;
       if (method === "POST") { saved = { ...preferences }; writes.push(saved); }
       else if (deferRead) return deferRead;
       return result();
     },
     onApply: p => applied.push({ ...p }),
+    getSelectedConversation: () => "current",
   });
-  return { settings, get, root, media, applied, writes, result, focused: () => focused, fail: value => { fail = value; }, defer: value => { deferRead = value; } };
+  return { settings, get, root, media, applied, writes, result, requests, statistics: value => { statistics = value; }, focused: () => focused, fail: value => { fail = value; }, defer: value => { deferRead = value; } };
 }
 
 test("settings save applies only committed values and keeps restart status explicit", async () => {
@@ -112,4 +119,56 @@ test("a failed initial read can be retried from the settings button", async () =
   f.fail(false);
   await f.settings.open();
   assert.equal(f.get("save-settings").disabled, false);
+});
+
+test("statistics stays on demand, shows exact coverage and safe chat choices without saving preferences", async () => {
+  const f = fixture();
+  await f.settings.initialize({ settings_enabled: true, statistics_enabled: true });
+  await f.settings.open();
+  assert.equal(f.requests.some(url => url.startsWith("/api/statistics")), false);
+  f.get("tab-statistics").handlers.click();
+  await f.settings.openStatistics();
+  assert.equal(f.get("statistics-results").hidden, false);
+  assert.equal(f.get("statistics-input-tokens").textContent, "20");
+  assert.equal(f.get("statistics-output-tokens").textContent, "Нет данных");
+  assert.match(f.get("statistics-coverage").textContent, /1 из 3 сообщений/);
+  assert.equal(f.get("statistics-unfinished").textContent, "3");
+  assert.equal(f.get("statistics-scope").children[1].value, "current");
+  assert.equal(f.get("statistics-scope").children[2].textContent, "<img onerror=bad()>");
+  assert.equal(f.get("save-settings").hidden, true);
+  await f.settings.save();
+  assert.equal(f.writes.length, 0);
+  f.get("statistics-scope").value = "a&b";
+  await f.settings.loadStatistics();
+  assert.equal(f.requests.at(-1), "/api/statistics?conversation_id=a%26b");
+  f.get("tab-appearance").handlers.click();
+  assert.equal(f.get("save-settings").hidden, false);
+});
+
+test("closing or switching scope rejects old statistics; failure hides stale totals and permits retry", async () => {
+  const f = fixture();
+  await f.settings.initialize({ settings_enabled: true, statistics_enabled: true });
+  await f.settings.open();
+  f.get("tab-statistics").handlers.click();
+  await f.settings.openStatistics();
+  let release;
+  f.statistics(new Promise(resolve => { release = resolve; }));
+  const loading = f.settings.loadStatistics();
+  f.settings.close();
+  release({});
+  await loading;
+  assert.equal(f.get("statistics-results").hidden, true);
+  f.statistics({ conversations: 0, user_messages: 0, assistant_messages: 0, input_tokens: null, output_tokens: null, counted_user_messages: 0, counted_assistant_messages: 0, regenerations: 0, generated_images: 0, failed_turns: 0, interrupted_turns: 0, pending_turns: 0, first_message_at: null, last_message_at: null });
+  await f.settings.open();
+  await f.settings.openStatistics();
+  assert.equal(f.get("statistics-input-tokens").textContent, "0");
+  assert.equal(f.get("statistics-empty").hidden, false);
+  f.fail(true);
+  await f.settings.loadStatistics();
+  assert.equal(f.get("statistics-results").hidden, true);
+  assert.equal(f.get("statistics-status").textContent, "Cannot save");
+  f.fail(false);
+  await f.settings.openStatistics();
+  assert.equal(f.get("statistics-results").hidden, false);
+  assert.equal(f.writes.length, 0);
 });

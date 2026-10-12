@@ -1,9 +1,13 @@
 "use strict";
 
 window.JarvisSettings = class {
-  constructor({ api, onApply }) {
+  constructor({ api, onApply, getSelectedConversation = () => null }) {
     this.api = api;
     this.onApply = onApply;
+    this.getSelectedConversation = getSelectedConversation;
+    this.statisticsScope = document.getElementById("statistics-scope");
+    this.statisticsScope.addEventListener("change", () => this.loadStatistics());
+    document.getElementById("refresh-statistics").addEventListener("click", () => this.openStatistics());
     this.preferences = { theme: "dark", accent: "mint", text_size: 14, send_shortcut: "enter", voice_volume: 80, output_tokens: 2048 };
     this.defaults = { ...this.preferences };
     this.dialog = document.getElementById("settings-dialog");
@@ -25,13 +29,21 @@ window.JarvisSettings = class {
     this.tabs = [...document.querySelectorAll("[data-settings-tab]")];
     this.pages = [...document.querySelectorAll("[data-settings-page]")];
     for (const tab of this.tabs) tab.addEventListener("click", () => {
+      if (this.saving) return;
       for (const item of this.tabs) item.setAttribute("aria-pressed", String(item === tab));
       for (const page of this.pages) page.hidden = page.dataset.settingsPage !== tab.dataset.settingsTab;
+      this.statisticsActive = tab.dataset.settingsTab === "statistics";
+      this.saveButton.hidden = this.resetButton.hidden = this.status.hidden = this.statisticsActive;
+      document.getElementById("settings-footer").hidden = this.statisticsActive;
+      if (this.statisticsActive) this.openStatistics();
+      else this.statisticsGeneration = (this.statisticsGeneration || 0) + 1;
     });
   }
 
   async initialize(session) {
     if (!session.settings_enabled) return;
+    this.statisticsEnabled = Boolean(session.statistics_enabled);
+    document.getElementById("statistics-tab").hidden = !this.statisticsEnabled;
     this.controls.voice_volume.disabled = !session.spoken_enabled;
     document.getElementById("setting-voice-availability").textContent = session.spoken_enabled ? "Голосовой модуль подключён." : "Голосовой модуль не подключён в текущем запуске.";
     try {
@@ -78,6 +90,7 @@ window.JarvisSettings = class {
     this.fill(this.preferences);
     this.status.textContent = this.restartRequired ? "Изменение лимита ожидает перезапуска." : "";
     this.dialog.showModal();
+    if (this.statisticsActive) this.openStatistics();
     const generation = this.readGeneration = (this.readGeneration || 0) + 1;
     this.saveButton.disabled = true;
     this.fields.disabled = true;
@@ -99,11 +112,57 @@ window.JarvisSettings = class {
   }
 
   close() {
-    if (!this.saving) { this.readGeneration = (this.readGeneration || 0) + 1; this.dialog.close(); }
+    if (!this.saving) { this.readGeneration = (this.readGeneration || 0) + 1; this.statisticsGeneration = (this.statisticsGeneration || 0) + 1; this.dialog.close(); }
+  }
+
+  async openStatistics() {
+    if (!this.statisticsEnabled || !this.dialog.open || !this.statisticsActive) return;
+    const generation = this.statisticsGeneration = (this.statisticsGeneration || 0) + 1;
+    const status = document.getElementById("statistics-status");
+    status.textContent = "Загружаю…";
+    document.getElementById("statistics-results").hidden = true;
+    try {
+      const { conversations } = await this.api("/api/conversations");
+      if (generation !== this.statisticsGeneration) return;
+      const previous = this.statisticsScope.value;
+      const current = this.getSelectedConversation();
+      const option = (value, text) => { const node = document.createElement("option"); node.value = value; node.textContent = text; return node; };
+      const ordered = [...conversations].sort((a, b) => Number(b.id === current) - Number(a.id === current));
+      this.statisticsScope.replaceChildren(option("", "Все диалоги"), ...ordered.map(chat => option(chat.id, chat.title + (chat.id === current ? " · текущий" : ""))));
+      this.statisticsScope.value = conversations.some(chat => chat.id === previous) ? previous : "";
+      await this.loadStatistics();
+    } catch (error) { if (generation === this.statisticsGeneration) status.textContent = error.message; }
+  }
+
+  async loadStatistics() {
+    if (!this.statisticsEnabled || !this.dialog.open || !this.statisticsActive) return;
+    const generation = this.statisticsGeneration = (this.statisticsGeneration || 0) + 1;
+    const status = document.getElementById("statistics-status");
+    const results = document.getElementById("statistics-results");
+    status.textContent = "Загружаю…";
+    results.hidden = true;
+    try {
+      const scope = this.statisticsScope.value;
+      const data = await this.api("/api/statistics" + (scope ? `?conversation_id=${encodeURIComponent(scope)}` : ""));
+      if (generation !== this.statisticsGeneration) return;
+      const number = value => value.toLocaleString("ru-RU");
+      const put = (id, text) => { document.getElementById(`statistics-${id}`).textContent = text; };
+      for (const key of ["conversations", "user_messages", "assistant_messages", "regenerations", "generated_images", "failed_turns", "interrupted_turns", "pending_turns"]) put(key.replaceAll("_", "-"), number(data[key]));
+      for (const [key, total] of [["input_tokens", data.user_messages], ["output_tokens", data.assistant_messages]]) put(key.replaceAll("_", "-"), data[key] === null ? (total === 0 ? "0" : "Нет данных") : number(data[key]));
+      const missing = data.counted_user_messages < data.user_messages || data.counted_assistant_messages < data.assistant_messages;
+      put("coverage", `Токены учтены для ${number(data.counted_user_messages)} из ${number(data.user_messages)} сообщений и ${number(data.counted_assistant_messages)} из ${number(data.assistant_messages)} ответов.` + (missing ? " Для остальных нет данных о токенах." : ""));
+      const date = value => value ? new Date(value).toLocaleString("ru-RU", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+      put("first-message", date(data.first_message_at));
+      put("last-message", date(data.last_message_at));
+      put("unfinished", number(data.failed_turns + data.interrupted_turns + data.pending_turns));
+      document.getElementById("statistics-empty").hidden = data.user_messages !== 0;
+      status.textContent = "За всё время · обновлено " + new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+      results.hidden = false;
+    } catch (error) { if (generation === this.statisticsGeneration) status.textContent = error.message; }
   }
 
   async save() {
-    if (this.saving || !this.loaded) return;
+    if (this.saving || !this.loaded || this.statisticsActive) return;
     const preferences = Object.fromEntries(Object.entries(this.controls).map(([key, control]) => [key, ["text_size", "voice_volume", "output_tokens"].includes(key) ? Number(control.value) : control.value]));
     this.saving = true;
     this.saveButton.disabled = true;

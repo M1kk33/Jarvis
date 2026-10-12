@@ -27,6 +27,7 @@ from jarvis.domain.jobs import (
 )
 from jarvis.domain.preferences import Preferences
 from jarvis.domain.retrieval import Document, Memory, RetrievalHit, RetrievalRoot
+from jarvis.domain.statistics import ChatStatistics
 from jarvis.domain.tools import (
     Approval,
     ContextRecord,
@@ -249,6 +250,7 @@ class SqliteStore:
             (9, "009_conversation_pins.sql"),
             (10, "010_preferences.sql"),
             (11, "011_reply_versions.sql"),
+            (12, "012_text_token_counts.sql"),
         ):
             script = (
                 resources.files("jarvis")
@@ -275,6 +277,81 @@ class SqliteStore:
             except BaseException:
                 self._conn.rollback()
                 raise
+
+    @_on_owner
+    def checkpoint_text_tokens(
+        self,
+        turn_id: str,
+        text: str,
+        count: int,
+        role: str,
+        expected_job_attempt: int | None = None,
+    ) -> None:
+        if type(count) is not int or count < 0 or role not in {"user", "assistant"}:
+            raise ValueError("Invalid text token checkpoint")
+        with self._transaction():
+            turn = self.get_turn(turn_id)
+            job = self.get_job_by_turn(turn_id)
+            if turn.status is not TurnStatus.PENDING or (
+                job is not None
+                and (
+                    job.status is not JobStatus.RUNNING
+                    or job.cancel_requested
+                    or job.attempt != expected_job_attempt
+                )
+            ):
+                raise StaleTurnError("Token checkpoint belongs to an inactive attempt")
+            if role == "user":
+                if self.get_user_message(turn_id).text != text:
+                    raise SubmissionConflict("Token checkpoint has different input")
+                self._conn.execute(
+                    "INSERT INTO text_token_counts(turn_id,input_tokens) VALUES(?,?) "
+                    "ON CONFLICT(turn_id) DO UPDATE SET input_tokens=excluded.input_tokens",
+                    (turn_id, count),
+                )
+            else:
+                self._conn.execute(
+                    "INSERT INTO text_token_counts(turn_id,output_tokens,output_sha256) "
+                    "VALUES(?,?,?) ON CONFLICT(turn_id) DO UPDATE SET "
+                    "output_tokens=excluded.output_tokens,output_sha256=excluded.output_sha256",
+                    (turn_id, count, hashlib.sha256(text.encode("utf-8")).hexdigest()),
+                )
+
+    @_on_owner
+    def get_statistics(self, conversation_id: str | None = None) -> ChatStatistics:
+        if conversation_id is not None:
+            self.get_conversation(conversation_id)
+        # One statement/snapshot, on the connection owner. No message content,
+        # model call, filesystem traversal or mutable counter is needed here.
+        row = self._conn.execute(
+            """
+            WITH selected AS (
+                SELECT * FROM turns WHERE (? IS NULL OR conversation_id=?)
+            ), texts AS (
+                SELECT m.role,m.created_at,t.regeneration_of,c.input_tokens,c.output_tokens
+                FROM selected t JOIN messages m ON m.turn_id=t.id
+                LEFT JOIN text_token_counts c ON c.turn_id=t.id
+            )
+            SELECT
+                (SELECT count(*) FROM conversations WHERE (? IS NULL OR id=?)) conversations,
+                (SELECT count(*) FROM texts WHERE role='user' AND regeneration_of IS NULL) user_messages,
+                (SELECT count(*) FROM texts WHERE role='assistant') assistant_messages,
+                (SELECT count(*) FROM selected WHERE regeneration_of IS NOT NULL) regenerations,
+                (SELECT count(*) FROM image_steps i JOIN jobs j ON j.id=i.job_id
+                    JOIN selected t ON t.id=j.turn_id WHERE i.status='complete') generated_images,
+                (SELECT count(*) FROM selected WHERE status='failed') failed_turns,
+                (SELECT count(*) FROM selected WHERE status='interrupted') interrupted_turns,
+                (SELECT count(*) FROM selected WHERE status='pending') pending_turns,
+                (SELECT sum(input_tokens) FROM texts WHERE role='user' AND regeneration_of IS NULL) input_tokens,
+                (SELECT sum(output_tokens) FROM texts WHERE role='assistant') output_tokens,
+                (SELECT count(input_tokens) FROM texts WHERE role='user' AND regeneration_of IS NULL) counted_user_messages,
+                (SELECT count(output_tokens) FROM texts WHERE role='assistant') counted_assistant_messages,
+                (SELECT min(created_at) FROM texts) first_message_at,
+                (SELECT max(created_at) FROM texts) last_message_at
+            """,
+            (conversation_id, conversation_id, conversation_id, conversation_id),
+        ).fetchone()
+        return ChatStatistics(**dict(row))
 
     @_on_owner
     def get_preferences(self) -> Preferences:
@@ -1812,6 +1889,13 @@ class SqliteStore:
                 "SELECT COALESCE(MAX(position), 0) + 1 FROM messages WHERE conversation_id=?",
                 (turn["conversation_id"],),
             ).fetchone()[0]
+            # Only a checkpoint for this exact final text may become a counted
+            # reply. This change commits atomically with the message/turn below.
+            self._conn.execute(
+                "UPDATE text_token_counts SET output_tokens=NULL,output_sha256=NULL "
+                "WHERE turn_id=? AND output_sha256<>?",
+                (turn_id, hashlib.sha256(answer.encode("utf-8")).hexdigest()),
+            )
             self._conn.execute(
                 "INSERT INTO messages "
                 "(id, conversation_id, turn_id, position, role, content_json, status, created_at) "

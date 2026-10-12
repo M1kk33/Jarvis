@@ -13,6 +13,7 @@ from threading import Event
 from uuid import uuid4
 
 from jarvis.application.resource_manager import ResourceManager, _settle
+from jarvis.application.statistics import checkpoint_text_tokens
 from jarvis.domain.ports import JobStore, VisionProvider
 from jarvis.domain.resources import RuntimeProfile
 from jarvis.domain.types import (
@@ -198,6 +199,15 @@ class VisionService:
                 raise RequestFailure(
                     "invalid_request", "Screenshot question exceeds context budget"
                 )
+            await checkpoint_text_tokens(
+                self.store,
+                self.provider,
+                turn_id,
+                question.text,
+                "user",
+                cancel,
+                job_attempt,
+            )
             iterator = iter(
                 self.provider.stream_vision(
                     question.text, image, cancel, VISION_INSTRUCTIONS
@@ -255,7 +265,17 @@ class VisionService:
                 raise RequestFailure(
                     "backend_crashed", "Vision stream ended incomplete"
                 )
-            return "".join(chunks)
+            answer = "".join(chunks)
+            await checkpoint_text_tokens(
+                self.store,
+                self.provider,
+                turn_id,
+                answer,
+                "assistant",
+                cancel,
+                job_attempt,
+            )
+            return answer
         except BaseException:
             cancel.set()
             await _settle(asyncio.create_task(self.manager.abort_request(handle)))

@@ -28,6 +28,7 @@ from jarvis.application.jobs import JobRunner
 from jarvis.application.settings import SettingsService
 from jarvis.application.speech import MAX_CLIP_BYTES, SpeechService
 from jarvis.application.spoken import SpokenPlaybackService
+from jarvis.application.statistics import StatisticsService
 from jarvis.application.tools import ToolService
 from jarvis.application.vision import MAX_SCREENSHOT_BYTES, validate_screenshot
 from jarvis.domain.jobs import TERMINAL_JOBS, Job, JobStatus
@@ -160,6 +161,7 @@ def create_web_app(
     spoken: SpokenPlaybackService | None = None,
     *,
     settings: SettingsService | None = None,
+    statistics: StatisticsService | None = None,
 ) -> tuple[FastAPI, str]:
     """Create an isolated session; the bootstrap binds it to 127.0.0.1 only."""
     origin = f"http://127.0.0.1:{port}"
@@ -382,6 +384,7 @@ def create_web_app(
             "spoken_enabled": spoken is not None,
             "vision_enabled": runner.vision is not None,
             "settings_enabled": settings is not None,
+            "statistics_enabled": statistics is not None,
         }
 
     def settings_payload(preferences: Preferences) -> dict[str, object]:
@@ -413,6 +416,13 @@ def create_web_app(
         except ValueError as exc:
             raise HTTPException(422, "Invalid preferences") from exc
         return settings_payload(await settings.save(preferences))
+
+    @app.get("/api/statistics")
+    async def read_statistics(request: Request, conversation_id: str | None = None):
+        authorize(request)
+        if statistics is None:
+            raise HTTPException(503, "Statistics are unavailable")
+        return asdict(await statistics.read(conversation_id))
 
     @app.get("/api/conversations")
     async def conversations(request: Request):

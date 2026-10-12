@@ -26,6 +26,7 @@ from jarvis.application.retrieval import RetrievalService
 from jarvis.application.settings import SettingsService
 from jarvis.application.speech import SpeechService
 from jarvis.application.spoken import SpokenPlaybackService
+from jarvis.application.statistics import StatisticsService
 from jarvis.application.tools import ToolPolicy, ToolService
 from jarvis.application.vision import VisionService
 from jarvis.domain.ports import ChatProvider
@@ -449,6 +450,7 @@ def main(
                         args.port,
                         speech,
                         spoken,
+                        statistics=StatisticsService(store),
                         settings=SettingsService(
                             store,
                             model_name=profile.name if profile else "Тестовая модель",

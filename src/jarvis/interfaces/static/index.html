@@ -85,6 +85,7 @@
           <button type="button" data-settings-tab="appearance" aria-pressed="true">Интерфейс</button>
           <button type="button" data-settings-tab="voice" aria-pressed="false">Голос</button>
           <button type="button" data-settings-tab="model" aria-pressed="false">Модель</button>
+          <button id="statistics-tab" type="button" data-settings-tab="statistics" aria-pressed="false" hidden>Статистика</button>
         </nav>
         <div class="settings-content">
           <fieldset id="settings-fields">
@@ -113,9 +114,37 @@
             <p id="setting-active-output" class="setting-help"></p>
           </section>
           </fieldset>
+          <section data-settings-page="statistics" aria-label="Статистика" hidden>
+            <div class="statistics-heading"><h3>Статистика чатов</h3><button id="refresh-statistics" class="quiet" type="button" title="Обновить статистику" aria-label="Обновить статистику"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10a8 7 0 0 0-13.7-4.8L3 8m0-4v4h4M4 14a8 7 0 0 0 13.7 4.8L21 16m0 4v-4h-4"/></svg></button></div>
+            <label class="statistics-scope" for="statistics-scope">Показать<select id="statistics-scope"><option value="">Все диалоги</option></select></label>
+            <p id="statistics-status" class="setting-help" role="status"></p>
+            <div id="statistics-results" hidden>
+              <p id="statistics-empty" class="setting-help" hidden>Пока нет сообщений. Статистика появится после начала переписки.</p>
+              <dl class="statistics-grid">
+                <div><dt>Сообщений отправлено</dt><dd id="statistics-user-messages">0</dd></div>
+                <div><dt>Ответов получено</dt><dd id="statistics-assistant-messages">0</dd></div>
+                <div><dt>Токенов введено</dt><dd id="statistics-input-tokens">Нет данных</dd></div>
+                <div><dt>Токенов в ответах</dt><dd id="statistics-output-tokens">Нет данных</dd></div>
+              </dl>
+              <p id="statistics-coverage" class="setting-help"></p>
+              <dl class="statistics-details">
+                <div><dt>Диалогов</dt><dd id="statistics-conversations">0</dd></div>
+                <div><dt>Перегенераций</dt><dd id="statistics-regenerations">0</dd></div>
+                <div><dt>Изображений создано</dt><dd id="statistics-generated-images">0</dd></div>
+                <div><dt>Первое сообщение</dt><dd id="statistics-first-message">—</dd></div>
+                <div><dt>Последняя активность</dt><dd id="statistics-last-message">—</dd></div>
+              </dl>
+              <details class="statistics-outcomes"><summary>Незавершённые запросы <span id="statistics-unfinished">0</span></summary><dl class="statistics-details">
+                <div><dt>С ошибкой</dt><dd id="statistics-failed-turns">0</dd></div>
+                <div><dt>Прерваны</dt><dd id="statistics-interrupted-turns">0</dd></div>
+                <div><dt>В работе или ожидают</dt><dd id="statistics-pending-turns">0</dd></div>
+              </dl></details>
+              <p class="setting-help statistics-note">Токены считаются токенизатором модели для текста новых сообщений и завершённых ответов. История в контексте, служебные инструкции, вызовы инструментов и изображения в эти числа не входят. Повторная генерация не добавляет пользовательское сообщение, но каждая сохранённая версия ответа учитывается. Черновики ответов не учитываются.</p>
+            </div>
+          </section>
         </div>
       </div>
-      <div class="settings-footer"><p id="settings-status" role="status"></p><button id="reset-settings" class="quiet" type="button">По умолчанию</button><button id="save-settings" type="submit">Сохранить</button></div>
+      <div id="settings-footer" class="settings-footer"><p id="settings-status" role="status"></p><button id="reset-settings" class="quiet" type="button">По умолчанию</button><button id="save-settings" type="submit">Сохранить</button></div>
     </form>
   </dialog>
 </body>

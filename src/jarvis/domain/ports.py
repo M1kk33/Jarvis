@@ -8,6 +8,7 @@ from typing import Protocol, TypeVar, runtime_checkable
 from jarvis.domain.jobs import Job, JobStep
 from jarvis.domain.preferences import Preferences
 from jarvis.domain.retrieval import Document, Memory, RetrievalHit, RetrievalRoot
+from jarvis.domain.statistics import ChatStatistics
 from jarvis.domain.tools import Approval, ContextRecord, ToolInvocation
 from jarvis.domain.types import (
     Conversation,
@@ -25,6 +26,29 @@ class PreferencesStore(Protocol):
     async def run(self, operation: Callable[[], T]) -> T: ...
     def get_preferences(self) -> Preferences: ...
     def set_preferences(self, preferences: Preferences) -> Preferences: ...
+
+
+class StatisticsStore(Protocol):
+    async def run(self, operation: Callable[[], T]) -> T: ...
+    def get_statistics(self, conversation_id: str | None = None) -> ChatStatistics: ...
+
+
+class TextTokenStore(Protocol):
+    async def run(self, operation: Callable[[], T]) -> T: ...
+    def get_user_message(self, turn_id: str) -> Message: ...
+    def checkpoint_text_tokens(
+        self,
+        turn_id: str,
+        text: str,
+        count: int,
+        role: str,
+        expected_job_attempt: int | None = None,
+    ) -> None: ...
+
+
+@runtime_checkable
+class TextTokenCounter(Protocol):
+    def count_output_tokens(self, text: str) -> int: ...
 
 
 class ChatProvider(Protocol):
@@ -66,7 +90,7 @@ class ExactTokenCounter(Protocol):
     ) -> int: ...
 
 
-class ConversationStore(Protocol):
+class ConversationStore(TextTokenStore, Protocol):
     async def run(self, operation: Callable[[], T]) -> T: ...
     def create_conversation(self, title: str) -> Conversation: ...
     def list_conversations(self) -> list[Conversation]: ...
@@ -277,7 +301,7 @@ class DocumentReader(Protocol):
     def read(self, root: str, path: str) -> bytes: ...
 
 
-class JobStore(Protocol):
+class JobStore(TextTokenStore, Protocol):
     data_dir: Path
 
     async def run(self, operation: Callable[[], T]) -> T: ...

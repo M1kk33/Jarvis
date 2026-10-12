@@ -42,6 +42,11 @@ def _provider(events):
     def handler(request):
         if request.url.path.endswith("input_tokens"):
             return httpx.Response(200, json={"input_tokens": 20})
+        if request.url.path == "/tokenize":
+            text = json.loads(request.content)["content"]
+            # A deterministic fixture tokenizer; inference request assertions
+            # below remain separate from these new statistics-only requests.
+            return httpx.Response(200, json={"tokens": list(range(len(text)))})
         requests.append(json.loads(request.content))
         body = "\n".join("data: " + json.dumps(event) for event in events)
         return httpx.Response(200, text=body + "\ndata: [DONE]\n")

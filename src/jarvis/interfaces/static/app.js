@@ -416,7 +416,7 @@ if (setupForm) {
     },
   });
 
-  const settings = new window.JarvisSettings({ api, onApply: (preferences) => {
+  const settings = new window.JarvisSettings({ api, getSelectedConversation: () => state.selected, onApply: (preferences) => {
     voicePlayer.setVolume(preferences.voice_volume / 100);
     document.getElementById("send-button").title = preferences.send_shortcut === "enter" ? "Отправить (Enter)" : "Отправить (Ctrl + Enter)";
     resizeInput();

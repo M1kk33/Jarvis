@@ -13,6 +13,7 @@ from uuid import uuid4
 from jarvis.application.context import ContextBuilder
 from jarvis.application.resource_manager import ResourceManager, _settle
 from jarvis.application.retrieval import RetrievalService
+from jarvis.application.statistics import checkpoint_text_tokens
 from jarvis.application.tools import ToolService
 from jarvis.domain.ports import (
     ChatProvider,
@@ -416,6 +417,7 @@ class ConversationService:
             await self.store.run(lambda: self.store.get_invocations(turn_id))
         )
         handle = None
+        input_counted = False
         try:
             while True:
                 records: list[ContextRecord] = []
@@ -451,6 +453,20 @@ class ConversationService:
                     handle = await self.resource_manager.acquire(self.runtime_profile)
                 try:
                     selected = await self._fit_exact_tool_context(selected, schemas)
+                    if not input_counted:
+                        user = await self.store.run(
+                            lambda: self.store.get_user_message(turn_id)
+                        )
+                        await checkpoint_text_tokens(
+                            self.store,
+                            self.provider,
+                            turn_id,
+                            user.text,
+                            "user",
+                            signal,
+                            job_attempt,
+                        )
+                        input_counted = True
                     text, proposal = await self._consume_tool_stream(
                         turn_id,
                         selected,
@@ -459,6 +475,16 @@ class ConversationService:
                         on_delta,
                         job_attempt,
                     )
+                    if proposal is None and text is not None:
+                        await checkpoint_text_tokens(
+                            self.store,
+                            self.provider,
+                            turn_id,
+                            text,
+                            "assistant",
+                            signal,
+                            job_attempt,
+                        )
                 except BaseException:
                     signal.set()
                     if handle is not None:
@@ -664,6 +690,10 @@ class ConversationService:
         on_delta: Callable[[str], Awaitable[None]] | None,
         job_attempt: int | None,
     ) -> str:
+        user = await self.store.run(lambda: self.store.get_user_message(turn_id))
+        await checkpoint_text_tokens(
+            self.store, self.provider, turn_id, user.text, "user", cancel, job_attempt
+        )
         iterator = iter(self.provider.stream(messages, cancel, self.instructions))
         chunks: list[str] = []
         received_bytes = 0
@@ -749,4 +779,8 @@ class ConversationService:
             )
         if not chunks:
             raise RequestFailure("backend_crashed", "Stream completed without a reply")
-        return "".join(chunks)
+        answer = "".join(chunks)
+        await checkpoint_text_tokens(
+            self.store, self.provider, turn_id, answer, "assistant", cancel, job_attempt
+        )
+        return answer
