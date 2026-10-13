@@ -2,6 +2,12 @@
 
 Date: 11 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
 
+### 0.5.2 automatic sign-in without a form flash
+
+- The setup HTML initially hides the complete manual-entry section and shows “Запускаю Jarvis…”. Automatic sign-in sends the launch code directly to the existing endpoint without putting it in the password field. The form becomes visible/focused only for a launch without a code or a failed exchange. The code is still removed from browser history before exchange; authentication, cookie, origin and CSRF checks are unchanged.
+- Offline checks: **389 Python tests passed, 3 hardware opt-ins skipped; 56 JavaScript tests passed**. Ruff and mypy passed. Packaged browser checks verified delayed automatic sign-in with the form hidden and field empty, successful manual entry, and recovery from an invalid automatic code through manual entry, without JavaScript errors. Installer: `dist/Jarvis-0.5.2.msi`.
+- Installed 0.5.2 successfully; all **2,069** packaged files matched. Installed native smoke passed with verified full tree exit, and the ordinary application was reopened. A read-only before/after audit confirmed the existing history, preferences and schema unchanged, apart from the already documented `job_steps.updated_at` startup timestamps.
+
 ### 0.5.1 explicit chat deletion
 
 - Hovering or focusing a sidebar row reveals a compact trash icon. It shares the row with the existing pin, reserves extra title space only while visible, and remains visible on touch devices. A themed modal names the selected conversation, explains permanent deletion and initially focuses Cancel. Escape cancels; an in-flight deletion cannot be submitted twice. Deleting another chat preserves selection and the unsent composer; deleting the current chat opens the empty new-chat view while retaining unsent text/attachment.

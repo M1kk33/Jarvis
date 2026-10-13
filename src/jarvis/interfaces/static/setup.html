@@ -10,13 +10,16 @@
 <body class="setup-page">
   <main class="setup-card">
     <div class="brand">Jarvis</div>
-    <h1>Ваш личный помощник</h1>
-    <p>Приложение войдёт автоматически. Если вы запустили сервер вручную, введите одноразовый код из терминала.</p>
-    <form id="setup-form">
-      <label for="setup-token">Одноразовый код</label>
-      <input id="setup-token" type="password" autocomplete="off" required autofocus>
-      <button type="submit">Открыть Jarvis</button>
-    </form>
+    <p id="setup-loading" role="status">Запускаю Jarvis…</p>
+    <div id="setup-manual" hidden>
+      <h1>Ваш личный помощник</h1>
+      <p>Введите одноразовый код из терминала, если вы запустили сервер вручную.</p>
+      <form id="setup-form">
+        <label for="setup-token">Одноразовый код</label>
+        <input id="setup-token" type="password" autocomplete="off" required>
+        <button type="submit">Открыть Jarvis</button>
+      </form>
+    </div>
     <p id="notice" class="notice" role="status"></p>
   </main>
 </body>

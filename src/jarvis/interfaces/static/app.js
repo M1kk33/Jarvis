@@ -21,30 +21,39 @@ if (window.location.hash) {
 
 if (setupForm) {
   const tokenInput = document.getElementById("setup-token");
-  async function exchangeToken(event) {
+  const loading = document.getElementById("setup-loading");
+  const manual = document.getElementById("setup-manual");
+  function showManualSetup() {
+    loading.hidden = true;
+    manual.hidden = false;
+    tokenInput.focus();
+  }
+  async function exchangeToken(event, suppliedToken = tokenInput.value) {
     if (event) event.preventDefault();
-    say("");
     const button = setupForm.querySelector("button");
+    if (button.disabled) return;
+    say("");
     button.disabled = true;
     try {
       await responseJson(await fetch("/api/setup", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: tokenInput.value }),
+        body: JSON.stringify({ token: suppliedToken }),
       }));
       tokenInput.value = "";
       window.location.replace("/");
     } catch (error) {
+      tokenInput.value = "";
       say(error.message);
       button.disabled = false;
+      showManualSetup();
     }
   }
   setupForm.addEventListener("submit", exchangeToken);
   if (launchToken) {
-    tokenInput.value = launchToken;
-    exchangeToken();
-  }
+    exchangeToken(null, launchToken);
+  } else showManualSetup();
 } else {
   const state = { csrf: null, selected: null, fresh: false, source: null, pending: null, spokenEnabled: false };
   const jobUpdates = new Map();
