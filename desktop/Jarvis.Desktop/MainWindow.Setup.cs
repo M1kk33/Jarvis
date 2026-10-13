@@ -79,7 +79,7 @@ internal sealed partial class MainWindow
             options = options with { DataDirectory = directory };
             Text = "Jarvis · " + digest;
             actions.Controls.Clear();
-            status.Text = "Подготавливаю ваше рабочее пространство…";
+            status.Text = "Jarvis\n\n…";
             await StartAsync();
         }
         catch (Exception error)

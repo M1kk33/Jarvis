@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>Jarvis</title>
   <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/i18n.js" defer></script>
   <script src="/static/voice_player.js" defer></script>
   <script src="/static/settings.js" defer></script>
   <script src="/static/marked.umd.js" defer></script>
@@ -16,17 +17,17 @@
   <div id="app-layout" class="layout">
     <aside id="chat-sidebar" class="sidebar">
       <div class="brand"><span class="brand-mark" aria-hidden="true">J</span> Jarvis</div>
-      <button id="new-conversation" class="new-chat" type="button"><svg viewBox="4 4 16 16" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Новый диалог</span></button>
-      <h2>Ваши диалоги</h2>
-      <nav id="conversations" aria-label="Диалоги"></nav>
-      <button id="open-settings" class="settings-launch quiet" type="button" hidden><span aria-hidden="true">⚙</span> Настройки</button>
-      <div id="sidebar-resizer" class="sidebar-resizer" role="separator" tabindex="0" aria-label="Ширина списка диалогов" aria-orientation="vertical" aria-controls="chat-sidebar" aria-valuemin="150" aria-valuemax="420" aria-valuenow="226" title="Потяните, чтобы изменить ширину · двойной щелчок — сброс"></div>
+      <button id="new-conversation" class="new-chat" type="button"><svg viewBox="4 4 16 16" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span data-i18n="Новый диалог">Новый диалог</span></button>
+      <h2 data-i18n="Ваши диалоги">Ваши диалоги</h2>
+      <nav id="conversations" aria-label="Диалоги" data-i18n-aria-label="Диалоги"></nav>
+      <button id="open-settings" class="settings-launch quiet" type="button" hidden><span aria-hidden="true">⚙</span><span data-i18n="Настройки">Настройки</span></button>
+      <div id="sidebar-resizer" class="sidebar-resizer" role="separator" tabindex="0" aria-label="Ширина списка диалогов" data-i18n-aria-label="Ширина списка диалогов" aria-orientation="vertical" aria-controls="chat-sidebar" aria-valuemin="150" aria-valuemax="420" aria-valuenow="226" title="Потяните, чтобы изменить ширину · двойной щелчок — сброс" data-i18n-title="Потяните, чтобы изменить ширину · двойной щелчок — сброс"></div>
     </aside>
     <main class="chat">
       <header>
-        <div class="heading"><h1 id="conversation-title">Новый диалог</h1></div>
+        <div class="heading"><h1 id="conversation-title" data-i18n="Новый диалог">Новый диалог</h1></div>
         <div class="header-actions">
-          <button id="stop-voice" type="button" class="quiet" hidden>Остановить голос</button>
+          <button id="stop-voice" type="button" class="quiet" hidden data-i18n="Остановить голос">Остановить голос</button>
         </div>
       </header>
       <div class="voice-line"><span id="voice-status" role="status"></span></div>
@@ -34,37 +35,37 @@
       <div class="composer-wrap">
         <button id="attention-notice" class="attention-notice quiet" type="button" aria-controls="activity-panel" aria-expanded="false" hidden></button>
         <form id="send-form" class="composer">
-          <label for="message-input" class="sr-only">Сообщение</label>
+          <label for="message-input" class="sr-only" data-i18n="Сообщение">Сообщение</label>
           <div class="composer-row">
             <div id="vision-controls" class="attachment-controls" hidden>
-              <button id="attach-image" class="composer-icon quiet" type="button" title="Прикрепить изображение · Ctrl + V или перетащите сюда" aria-label="Прикрепить изображение">
+              <button id="attach-image" class="composer-icon quiet" type="button" title="Прикрепить изображение · Ctrl + V или перетащите сюда" data-i18n-title="Прикрепить изображение · Ctrl + V или перетащите сюда" aria-label="Прикрепить изображение" data-i18n-aria-label="Прикрепить изображение">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
               </button>
-              <input id="screenshot-input" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Выбрать изображение">
+              <input id="screenshot-input" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Выбрать изображение" data-i18n-aria-label="Выбрать изображение">
             </div>
-            <textarea id="message-input" rows="1" maxlength="65536" placeholder="Спросить Jarvis" required></textarea>
+            <textarea id="message-input" rows="1" maxlength="65536" placeholder="Спросить Jarvis" data-i18n-placeholder="Спросить Jarvis" required></textarea>
             <div class="composer-actions">
               <div id="speech-controls" class="speech-controls" hidden>
-                <button id="record-button" type="button" class="composer-icon quiet" title="Записать голос" aria-label="Записать голос">
+                <button id="record-button" type="button" class="composer-icon quiet" title="Записать голос" data-i18n-title="Записать голос" aria-label="Записать голос" data-i18n-aria-label="Записать голос">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3M9 22h6"/></svg>
                 </button>
-                <button id="stop-recording" type="button" class="composer-icon" title="Завершить запись" aria-label="Завершить запись" hidden>
+                <button id="stop-recording" type="button" class="composer-icon" title="Завершить запись" data-i18n-title="Завершить запись" aria-label="Завершить запись" data-i18n-aria-label="Завершить запись" hidden>
                   <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                 </button>
-                <button id="cancel-transcription" type="button" class="composer-icon quiet" title="Отменить распознавание" aria-label="Отменить распознавание" hidden>
+                <button id="cancel-transcription" type="button" class="composer-icon quiet" title="Отменить распознавание" data-i18n-title="Отменить распознавание" aria-label="Отменить распознавание" data-i18n-aria-label="Отменить распознавание" hidden>
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg>
                 </button>
               </div>
-              <button id="send-button" class="composer-icon" type="submit" title="Отправить (Enter)" aria-label="Отправить">
+              <button id="send-button" class="composer-icon" type="submit" title="Отправить (Enter)" data-i18n-title="Отправить (Enter)" aria-label="Отправить" data-i18n-aria-label="Отправить">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg>
               </button>
             </div>
           </div>
           <div id="attachment-preview" class="attachment-preview" hidden>
-            <img id="screenshot-preview" alt="Выбранный скриншот" hidden>
+            <img id="screenshot-preview" alt="Выбранный скриншот" data-i18n-alt="Выбранный скриншот" hidden>
             <span id="screenshot-status" role="status"></span>
-            <button id="remove-screenshot" class="quiet" type="button" hidden>Убрать скриншот</button>
-            <span class="subtle">Скриншот сохранится в диалоге и резервных копиях. Удаление скриншотов пока не предусмотрено.</span>
+            <button id="remove-screenshot" class="quiet" type="button" hidden data-i18n="Убрать скриншот">Убрать скриншот</button>
+            <span class="subtle" data-i18n="Скриншот сохранится в диалоге и резервных копиях. Удаление скриншотов пока не предусмотрено.">Скриншот сохранится в диалоге и резервных копиях. Удаление скриншотов пока не предусмотрено.</span>
           </div>
           <div id="speech-status" class="composer-status" role="status"></div>
         </form>
@@ -72,88 +73,89 @@
       </div>
     </main>
     <aside id="activity-panel" class="activity" hidden>
-      <div class="activity-heading"><h2>Действия</h2><button id="close-activity" type="button" class="icon-button" aria-label="Закрыть панель действий">×</button></div>
-      <h3>Требуют внимания</h3><div id="approvals"></div>
-      <h3>Ход работы</h3><div id="jobs"></div>
+      <div class="activity-heading"><h2 data-i18n="Действия">Действия</h2><button id="close-activity" type="button" class="icon-button" aria-label="Закрыть панель действий" data-i18n-aria-label="Закрыть панель действий">×</button></div>
+      <h3 data-i18n="Требуют внимания">Требуют внимания</h3><div id="approvals"></div>
+      <h3 data-i18n="Ход работы">Ход работы</h3><div id="jobs"></div>
     </aside>
   </div>
   <dialog id="delete-chat-dialog" aria-labelledby="delete-chat-title" aria-describedby="delete-chat-description">
     <form id="delete-chat-form">
-      <h2 id="delete-chat-title">Удалить диалог?</h2>
+      <h2 id="delete-chat-title" data-i18n="Удалить диалог?">Удалить диалог?</h2>
       <p id="delete-chat-name"></p>
-      <p id="delete-chat-description">Сообщения, изображения и статистика этого диалога будут удалены. Отменить удаление нельзя.</p>
+      <p id="delete-chat-description" data-i18n="Сообщения, изображения и статистика этого диалога будут удалены. Отменить удаление нельзя.">Сообщения, изображения и статистика этого диалога будут удалены. Отменить удаление нельзя.</p>
       <p id="delete-chat-status" role="status"></p>
-      <div class="delete-chat-actions"><button id="cancel-delete-chat" type="button" class="quiet" autofocus>Отмена</button><button id="confirm-delete-chat" type="submit" class="danger">Удалить</button></div>
+      <div class="delete-chat-actions"><button id="cancel-delete-chat" type="button" class="quiet" autofocus data-i18n="Отмена">Отмена</button><button id="confirm-delete-chat" type="submit" class="danger" data-i18n="Удалить">Удалить</button></div>
     </form>
   </dialog>
   <dialog id="settings-dialog" aria-labelledby="settings-title">
     <form id="settings-form">
-      <div class="settings-heading"><h2 id="settings-title">Настройки</h2><button id="close-settings" class="icon-button" type="button" aria-label="Закрыть настройки">×</button></div>
+      <div class="settings-heading"><h2 id="settings-title" data-i18n="Настройки">Настройки</h2><button id="close-settings" class="icon-button" type="button" aria-label="Закрыть настройки" data-i18n-aria-label="Закрыть настройки">×</button></div>
       <div class="settings-body">
-        <nav class="settings-tabs" aria-label="Разделы настроек">
-          <button type="button" data-settings-tab="appearance" aria-pressed="true">Интерфейс</button>
-          <button type="button" data-settings-tab="voice" aria-pressed="false">Голос</button>
-          <button type="button" data-settings-tab="model" aria-pressed="false">Модель</button>
-          <button id="statistics-tab" type="button" data-settings-tab="statistics" aria-pressed="false" hidden>Статистика</button>
+        <nav class="settings-tabs" aria-label="Разделы настроек" data-i18n-aria-label="Разделы настроек">
+          <button type="button" data-settings-tab="appearance" aria-pressed="true" data-i18n="Интерфейс">Интерфейс</button>
+          <button type="button" data-settings-tab="voice" aria-pressed="false" data-i18n="Голос">Голос</button>
+          <button type="button" data-settings-tab="model" aria-pressed="false" data-i18n="Модель">Модель</button>
+          <button id="statistics-tab" type="button" data-settings-tab="statistics" aria-pressed="false" hidden data-i18n="Статистика">Статистика</button>
         </nav>
         <div class="settings-content">
           <fieldset id="settings-fields">
-          <section data-settings-page="appearance" aria-label="Интерфейс">
-            <h3>Внешний вид</h3>
-            <label class="setting-row" for="setting-theme"><span>Тема</span><select id="setting-theme"><option value="dark">Тёмная</option><option value="light">Светлая</option><option value="system">Как в системе</option></select></label>
-            <label class="setting-row" for="setting-accent"><span>Акцентный цвет</span><select id="setting-accent"><option value="mint">Мятный</option><option value="blue">Голубой</option><option value="violet">Лавандовый</option></select></label>
-            <label class="setting-row" for="setting-text-size"><span>Размер текста в чате</span><select id="setting-text-size"><option value="14">Обычный · 14</option><option value="16">Крупный · 16</option><option value="18">Очень крупный · 18</option></select></label>
-            <h3>Ввод сообщений</h3>
-            <label class="setting-row" for="setting-send-shortcut"><span>Отправлять через</span><select id="setting-send-shortcut"><option value="enter">Enter</option><option value="ctrl_enter">Ctrl + Enter</option></select></label>
-            <p class="setting-help">Shift + Enter всегда добавляет новую строку.</p>
+          <section data-settings-page="appearance" aria-label="Интерфейс" data-i18n-aria-label="Интерфейс">
+            <h3 data-i18n="Внешний вид">Внешний вид</h3>
+            <label class="setting-row" for="setting-language"><span data-i18n="Язык интерфейса">Язык интерфейса</span><select id="setting-language"><option value="ru">Русский</option><option value="en">English</option></select></label>
+            <label class="setting-row" for="setting-theme"><span data-i18n="Тема">Тема</span><select id="setting-theme"><option value="dark" data-i18n="Тёмная">Тёмная</option><option value="light" data-i18n="Светлая">Светлая</option><option value="system" data-i18n="Как в системе">Как в системе</option></select></label>
+            <label class="setting-row" for="setting-accent"><span data-i18n="Акцентный цвет">Акцентный цвет</span><select id="setting-accent"><option value="mint" data-i18n="Мятный">Мятный</option><option value="blue" data-i18n="Голубой">Голубой</option><option value="violet" data-i18n="Лавандовый">Лавандовый</option></select></label>
+            <label class="setting-row" for="setting-text-size"><span data-i18n="Размер текста в чате">Размер текста в чате</span><select id="setting-text-size"><option value="14" data-i18n="Обычный · 14">Обычный · 14</option><option value="16" data-i18n="Крупный · 16">Крупный · 16</option><option value="18" data-i18n="Очень крупный · 18">Очень крупный · 18</option></select></label>
+            <h3 data-i18n="Ввод сообщений">Ввод сообщений</h3>
+            <label class="setting-row" for="setting-send-shortcut"><span data-i18n="Отправлять через">Отправлять через</span><select id="setting-send-shortcut"><option value="enter">Enter</option><option value="ctrl_enter">Ctrl + Enter</option></select></label>
+            <p class="setting-help" data-i18n="Shift + Enter всегда добавляет новую строку.">Shift + Enter всегда добавляет новую строку.</p>
           </section>
-          <section data-settings-page="voice" aria-label="Голос" hidden>
-            <h3>Озвучивание ответов</h3>
-            <label class="setting-row" for="setting-voice-volume"><span>Громкость <output id="setting-volume-value">80%</output></span><input id="setting-voice-volume" type="range" min="0" max="100" step="5" value="80"></label>
+          <section data-settings-page="voice" aria-label="Голос" data-i18n-aria-label="Голос" hidden>
+            <h3 data-i18n="Озвучивание ответов">Озвучивание ответов</h3>
+            <label class="setting-row" for="setting-voice-volume"><span><span data-i18n="Громкость">Громкость</span> <output id="setting-volume-value">80%</output></span><input id="setting-voice-volume" type="range" min="0" max="100" step="5" value="80"></label>
             <p id="setting-voice-availability" class="setting-help"></p>
-            <p class="setting-help">Озвучивание и запись включаются по нажатию кнопки в чате.</p>
+            <p class="setting-help" data-i18n="Озвучивание и запись включаются по нажатию кнопки в чате.">Озвучивание и запись включаются по нажатию кнопки в чате.</p>
           </section>
-          <section data-settings-page="model" aria-label="Модель" hidden>
-            <h3>Подключённая модель</h3>
+          <section data-settings-page="model" aria-label="Модель" data-i18n-aria-label="Модель" hidden>
+            <h3 data-i18n="Подключённая модель">Подключённая модель</h3>
             <div id="setting-model-name" class="model-name"></div>
-            <div class="setting-row"><span>Контекст</span><span id="setting-context"></span></div>
-            <label class="setting-row" for="setting-output-tokens"><span>Лимит ответа</span><select id="setting-output-tokens"><option value="512">512 токенов</option><option value="1024">1 024 токена</option><option value="2048">2 048 токенов</option></select></label>
-            <p class="setting-help">Это максимальная длина, а не требование писать длинно. Больший лимит оставляет меньше места для истории в контексте.</p>
-            <p class="setting-help">Лимит ответа применяется после перезапуска Jarvis. Контекст и модель задаются установленным профилем.</p>
+            <div class="setting-row"><span data-i18n="Контекст">Контекст</span><span id="setting-context"></span></div>
+            <label class="setting-row" for="setting-output-tokens"><span data-i18n="Лимит ответа">Лимит ответа</span><select id="setting-output-tokens"><option value="512" data-i18n="512 токенов">512 токенов</option><option value="1024" data-i18n="1 024 токена">1 024 токена</option><option value="2048" data-i18n="2 048 токенов">2 048 токенов</option></select></label>
+            <p class="setting-help" data-i18n="Это максимальная длина, а не требование писать длинно. Больший лимит оставляет меньше места для истории в контексте.">Это максимальная длина, а не требование писать длинно. Больший лимит оставляет меньше места для истории в контексте.</p>
+            <p class="setting-help" data-i18n="Лимит ответа применяется после перезапуска Jarvis. Контекст и модель задаются установленным профилем.">Лимит ответа применяется после перезапуска Jarvis. Контекст и модель задаются установленным профилем.</p>
             <p id="setting-active-output" class="setting-help"></p>
           </section>
           </fieldset>
-          <section data-settings-page="statistics" aria-label="Статистика" hidden>
-            <div class="statistics-heading"><h3>Статистика чатов</h3><button id="refresh-statistics" class="quiet" type="button" title="Обновить статистику" aria-label="Обновить статистику"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10a8 7 0 0 0-13.7-4.8L3 8m0-4v4h4M4 14a8 7 0 0 0 13.7 4.8L21 16m0 4v-4h-4"/></svg></button></div>
-            <label class="statistics-scope" for="statistics-scope">Показать<select id="statistics-scope"><option value="">Все диалоги</option></select></label>
+          <section data-settings-page="statistics" aria-label="Статистика" data-i18n-aria-label="Статистика" hidden>
+            <div class="statistics-heading"><h3 data-i18n="Статистика чатов">Статистика чатов</h3><button id="refresh-statistics" class="quiet" type="button" title="Обновить статистику" data-i18n-title="Обновить статистику" aria-label="Обновить статистику" data-i18n-aria-label="Обновить статистику"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10a8 7 0 0 0-13.7-4.8L3 8m0-4v4h4M4 14a8 7 0 0 0 13.7 4.8L21 16m0 4v-4h-4"/></svg></button></div>
+            <label class="statistics-scope" for="statistics-scope"><span data-i18n="Показать">Показать</span><select id="statistics-scope"><option value="" data-i18n="Все диалоги">Все диалоги</option></select></label>
             <p id="statistics-status" class="setting-help" role="status"></p>
             <div id="statistics-results" hidden>
-              <p id="statistics-empty" class="setting-help" hidden>Пока нет сообщений. Статистика появится после начала переписки.</p>
+              <p id="statistics-empty" class="setting-help" hidden data-i18n="Пока нет сообщений. Статистика появится после начала переписки.">Пока нет сообщений. Статистика появится после начала переписки.</p>
               <dl class="statistics-grid">
-                <div><dt>Сообщений отправлено</dt><dd id="statistics-user-messages">0</dd></div>
-                <div><dt>Ответов получено</dt><dd id="statistics-assistant-messages">0</dd></div>
-                <div><dt>Токенов введено</dt><dd id="statistics-input-tokens">Нет данных</dd></div>
-                <div><dt>Токенов в ответах</dt><dd id="statistics-output-tokens">Нет данных</dd></div>
+                <div><dt data-i18n="Сообщений отправлено">Сообщений отправлено</dt><dd id="statistics-user-messages">0</dd></div>
+                <div><dt data-i18n="Ответов получено">Ответов получено</dt><dd id="statistics-assistant-messages">0</dd></div>
+                <div><dt data-i18n="Токенов введено">Токенов введено</dt><dd id="statistics-input-tokens" data-i18n="Нет данных">Нет данных</dd></div>
+                <div><dt data-i18n="Токенов в ответах">Токенов в ответах</dt><dd id="statistics-output-tokens" data-i18n="Нет данных">Нет данных</dd></div>
               </dl>
               <p id="statistics-coverage" class="setting-help"></p>
               <dl class="statistics-details">
-                <div><dt>Диалогов</dt><dd id="statistics-conversations">0</dd></div>
-                <div><dt>Перегенераций</dt><dd id="statistics-regenerations">0</dd></div>
-                <div><dt>Изображений создано</dt><dd id="statistics-generated-images">0</dd></div>
-                <div><dt>Первое сообщение</dt><dd id="statistics-first-message">—</dd></div>
-                <div><dt>Последняя активность</dt><dd id="statistics-last-message">—</dd></div>
+                <div><dt data-i18n="Диалогов">Диалогов</dt><dd id="statistics-conversations">0</dd></div>
+                <div><dt data-i18n="Перегенераций">Перегенераций</dt><dd id="statistics-regenerations">0</dd></div>
+                <div><dt data-i18n="Изображений создано">Изображений создано</dt><dd id="statistics-generated-images">0</dd></div>
+                <div><dt data-i18n="Первое сообщение">Первое сообщение</dt><dd id="statistics-first-message">—</dd></div>
+                <div><dt data-i18n="Последняя активность">Последняя активность</dt><dd id="statistics-last-message">—</dd></div>
               </dl>
-              <details class="statistics-outcomes"><summary>Незавершённые запросы <span id="statistics-unfinished">0</span></summary><dl class="statistics-details">
-                <div><dt>С ошибкой</dt><dd id="statistics-failed-turns">0</dd></div>
-                <div><dt>Прерваны</dt><dd id="statistics-interrupted-turns">0</dd></div>
-                <div><dt>В работе или ожидают</dt><dd id="statistics-pending-turns">0</dd></div>
+              <details class="statistics-outcomes"><summary><span data-i18n="Незавершённые запросы">Незавершённые запросы</span> <span id="statistics-unfinished">0</span></summary><dl class="statistics-details">
+                <div><dt data-i18n="С ошибкой">С ошибкой</dt><dd id="statistics-failed-turns">0</dd></div>
+                <div><dt data-i18n="Прерваны">Прерваны</dt><dd id="statistics-interrupted-turns">0</dd></div>
+                <div><dt data-i18n="В работе или ожидают">В работе или ожидают</dt><dd id="statistics-pending-turns">0</dd></div>
               </dl></details>
-              <p class="setting-help statistics-note">Токены считаются токенизатором модели для текста новых сообщений и завершённых ответов. История в контексте, служебные инструкции, вызовы инструментов и изображения в эти числа не входят. Повторная генерация не добавляет пользовательское сообщение, но каждая сохранённая версия ответа учитывается. Черновики ответов не учитываются.</p>
+              <p class="setting-help statistics-note" data-i18n="Токены считаются токенизатором модели для текста новых сообщений и завершённых ответов. История в контексте, служебные инструкции, вызовы инструментов и изображения в эти числа не входят. Повторная генерация не добавляет пользовательское сообщение, но каждая сохранённая версия ответа учитывается. Черновики ответов не учитываются.">Токены считаются токенизатором модели для текста новых сообщений и завершённых ответов. История в контексте, служебные инструкции, вызовы инструментов и изображения в эти числа не входят. Повторная генерация не добавляет пользовательское сообщение, но каждая сохранённая версия ответа учитывается. Черновики ответов не учитываются.</p>
             </div>
           </section>
         </div>
       </div>
-      <div id="settings-footer" class="settings-footer"><p id="settings-status" role="status"></p><button id="reset-settings" class="quiet" type="button">По умолчанию</button><button id="save-settings" type="submit">Сохранить</button></div>
+      <div id="settings-footer" class="settings-footer"><p id="settings-status" role="status"></p><button id="reset-settings" class="quiet" type="button" data-i18n="По умолчанию">По умолчанию</button><button id="save-settings" type="submit" data-i18n="Сохранить">Сохранить</button></div>
     </form>
   </dialog>
 </body>

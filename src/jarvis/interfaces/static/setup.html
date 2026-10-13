@@ -3,21 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Открыть Jarvis</title>
+  <title data-i18n="Открыть Jarvis">Открыть Jarvis</title>
   <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/i18n.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body class="setup-page">
   <main class="setup-card">
     <div class="brand">Jarvis</div>
-    <p id="setup-loading" role="status">Запускаю Jarvis…</p>
+    <p id="setup-loading" role="status" data-i18n="Запускаю Jarvis…">Запускаю Jarvis…</p>
     <div id="setup-manual" hidden>
-      <h1>Ваш личный помощник</h1>
-      <p>Введите одноразовый код из терминала, если вы запустили сервер вручную.</p>
+      <h1 data-i18n="Ваш личный помощник">Ваш личный помощник</h1>
+      <p data-i18n="Введите одноразовый код из терминала, если вы запустили сервер вручную.">Введите одноразовый код из терминала, если вы запустили сервер вручную.</p>
       <form id="setup-form">
-        <label for="setup-token">Одноразовый код</label>
+        <label for="setup-token" data-i18n="Одноразовый код">Одноразовый код</label>
         <input id="setup-token" type="password" autocomplete="off" required>
-        <button type="submit">Открыть Jarvis</button>
+        <button type="submit" data-i18n="Открыть Jarvis">Открыть Jarvis</button>
       </form>
     </div>
     <p id="notice" class="notice" role="status"></p>

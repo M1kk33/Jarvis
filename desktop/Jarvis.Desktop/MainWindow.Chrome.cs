@@ -10,6 +10,17 @@ internal sealed partial class MainWindow
     private readonly CaptionButton maximizeWindow = new(CaptionAction.Maximize, "Развернуть");
     private readonly CaptionButton closeWindow = new(CaptionAction.Close, "Закрыть");
     private const int DwmWindowCornerPreference = 33, DwmRound = 2;
+    private bool englishUI;
+    private bool languageSwitchTested;
+    private string Ui(string russian, string english) => englishUI ? english : russian;
+
+    private void ApplyWindowLanguage(bool english)
+    {
+        englishUI = english;
+        minimizeWindow.AccessibleName = Ui("Свернуть", "Minimize");
+        closeWindow.AccessibleName = Ui("Закрыть", "Close");
+        LayoutWindowChrome();
+    }
 
     protected override void OnHandleCreated(EventArgs e)
     {
@@ -104,9 +115,43 @@ internal sealed partial class MainWindow
         maximizeWindow.SetBounds(panelWidth - width * 2, 0, width, height);
         closeWindow.SetBounds(panelWidth - width, 0, width, height);
         maximizeWindow.Restore = WindowState == FormWindowState.Maximized;
-        maximizeWindow.AccessibleName = maximizeWindow.Restore ? "Восстановить размер" : "Развернуть";
+        maximizeWindow.AccessibleName = maximizeWindow.Restore ? Ui("Восстановить размер", "Restore") : Ui("Развернуть", "Maximize");
         maximizeWindow.Invalidate();
         windowControls.BringToFront();
+    }
+
+    private async Task VerifySettingsLanguageAsync()
+    {
+        smokeStage = "settings_language";
+        await browser!.CoreWebView2.ExecuteScriptAsync("""
+            (async()=>{
+              const s=await(await fetch('/api/session')).json();
+              const original=await(await fetch('/api/settings')).json();
+              window.__jarvisLanguageOriginal=original.preferences;
+              const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':s.csrf_token},body:JSON.stringify({...original.preferences,language:'en'})});
+              if(!r.ok)throw Error('language');
+              window.JarvisI18n.setLanguage('en');
+            })()
+            """);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!englishUI && DateTime.UtcNow < deadline) await Task.Delay(50);
+        if (!englishUI || closeWindow.AccessibleName != "Close" || minimizeWindow.AccessibleName != "Minimize") throw new InvalidOperationException("SettingsEnglishChrome");
+        await browser.CoreWebView2.ExecuteScriptAsync("window.chrome.webview.postMessage({language:'ru'});window.chrome.webview.postMessage('arbitrary-command')");
+        await Task.Delay(100);
+        if (!englishUI) throw new InvalidOperationException("LanguageMessageBoundary");
+        await browser.CoreWebView2.ExecuteScriptAsync("""
+            (async()=>{
+              const s=await(await fetch('/api/session')).json();
+              const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':s.csrf_token},body:JSON.stringify(window.__jarvisLanguageOriginal)});
+              if(!r.ok)throw Error('restore-language');
+              window.JarvisI18n.setLanguage(window.__jarvisLanguageOriginal.language);
+            })()
+            """);
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (englishUI && DateTime.UtcNow < deadline) await Task.Delay(50);
+        if (englishUI || closeWindow.AccessibleName != "Закрыть") throw new InvalidOperationException("SettingsRussianChrome");
+        languageSwitchTested = true;
+        smokeStage = "conversation";
     }
 
     protected override void WndProc(ref Message m)

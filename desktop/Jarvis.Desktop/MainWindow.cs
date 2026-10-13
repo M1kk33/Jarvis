@@ -33,7 +33,7 @@ internal sealed partial class MainWindow : Form
         Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
         InitializeWindowChrome();
         profileDirectory = Path.Combine(Path.GetTempPath(), "jarvis-view-" + Guid.NewGuid().ToString("N"));
-        status.Text = "Jarvis\n\nПодготавливаю ваше рабочее пространство…";
+        status.Text = "Jarvis\n\n…";
         landing.Controls.Add(status); landing.Controls.Add(actions); Controls.Add(landing);
         windowControls.BringToFront();
         Shown += async (_, _) => await StartAsync();
@@ -178,8 +178,8 @@ internal sealed partial class MainWindow : Form
             document.addEventListener('DOMContentLoaded',()=>{
               const root=document.documentElement;
               root.classList.add('desktop-window');
-              const notify=()=>window.chrome.webview.postMessage(root.dataset.theme==='light'?'jarvis:theme:light':'jarvis:theme:dark');
-              new MutationObserver(notify).observe(root,{attributes:true,attributeFilter:['data-theme']});
+              const notify=()=>{window.chrome.webview.postMessage(root.dataset.theme==='light'?'jarvis:theme:light':'jarvis:theme:dark');window.chrome.webview.postMessage(root.lang==='en'?'jarvis:language:en':'jarvis:language:ru');};
+              new MutationObserver(notify).observe(root,{attributes:true,attributeFilter:['data-theme','lang']});
               notify();
             },{once:true});
             """);
@@ -189,6 +189,8 @@ internal sealed partial class MainWindow : Form
             if (stopping || !ready || e.Source != origin + "/" || core.Source != origin + "/") return;
             if (e.WebMessageAsJson == "\"jarvis:theme:light\"") ApplyWindowTheme(true);
             else if (e.WebMessageAsJson == "\"jarvis:theme:dark\"") ApplyWindowTheme(false);
+            else if (e.WebMessageAsJson == "\"jarvis:language:en\"") ApplyWindowLanguage(true);
+            else if (e.WebMessageAsJson == "\"jarvis:language:ru\"") ApplyWindowLanguage(false);
         };
         core.NavigationStarting += (_, e) =>
         {
@@ -212,6 +214,7 @@ internal sealed partial class MainWindow : Form
             if (new Uri(core.Source).AbsolutePath != "/") return;
             ready = true;
             await core.ExecuteScriptAsync("window.chrome.webview.postMessage(document.documentElement.dataset.theme==='light'?'jarvis:theme:light':'jarvis:theme:dark')");
+            await core.ExecuteScriptAsync("window.chrome.webview.postMessage(document.documentElement.lang==='en'?'jarvis:language:en':'jarvis:language:ru')");
             landing.Visible = false;
             LayoutWindowChrome();
             if (options.SmokeOutput is not null) await SmokeAsync();
@@ -249,7 +252,7 @@ internal sealed partial class MainWindow : Form
             || operation.MimeType != "image/png") return;
         using var picker = new SaveFileDialog
         {
-            Title = "Сохранить изображение", FileName = $"Jarvis-{id}.png", Filter = "Изображение PNG|*.png",
+            Title = Ui("Сохранить изображение", "Save image"), FileName = $"Jarvis-{id}.png", Filter = Ui("Изображение PNG|*.png", "PNG image|*.png"),
             DefaultExt = "png", AddExtension = true, OverwritePrompt = true, CheckPathExists = true
         };
         if (picker.ShowDialog(this) != DialogResult.OK || stopping) return;
@@ -264,7 +267,7 @@ internal sealed partial class MainWindow : Form
         operation.StateChanged -= DownloadChanged; downloads.Remove(operation);
         if (!stopping && browser?.CoreWebView2 is not null)
         {
-            var message = operation.State == CoreWebView2DownloadState.Completed ? "Изображение сохранено" : "Сохранение не завершено";
+            var message = operation.State == CoreWebView2DownloadState.Completed ? Ui("Изображение сохранено", "Image saved") : Ui("Сохранение не завершено", "Save did not complete");
             try { await browser.CoreWebView2.ExecuteScriptAsync($"document.getElementById('notice').textContent={JsonSerializer.Serialize(message)}"); }
             catch (InvalidOperationException) { }
         }
@@ -274,7 +277,7 @@ internal sealed partial class MainWindow : Form
     {
         landing.Visible = true; landing.BringToFront();
         LayoutWindowChrome();
-        status.Text = "Jarvis не смог продолжить работу.\nВаши диалоги остаются в папке данных.\n\nКод: " + code;
+        status.Text = Ui("Jarvis не смог продолжить работу.\nВаши диалоги остаются в папке данных.\n\nКод: ", "Jarvis could not continue.\nYour chats are still in the data folder.\n\nCode: ") + code;
         if (options.SmokeOutput is not null)
         {
             File.WriteAllText(options.SmokeOutput, JsonSerializer.Serialize(new { success = false, code, stage = smokeStage, bounds = Bounds, client = RectangleToScreen(ClientRectangle), work_area = Screen.FromHandle(Handle).WorkingArea }));
@@ -296,7 +299,7 @@ internal sealed partial class MainWindow : Form
         stopping = true;
         landing.Visible = true; landing.BringToFront(); actions.Visible = false;
         LayoutWindowChrome();
-        status.Text = "Завершаю работу…\nСохраняю состояние и освобождаю модели.";
+        status.Text = Ui("Завершаю работу…\nСохраняю состояние и освобождаю модели.", "Shutting down…\nSaving state and releasing models.");
         try
         {
             if (setupProcess is not null && !setupProcess.HasExited)
@@ -321,19 +324,19 @@ internal sealed partial class MainWindow : Form
             // The job counter is authoritative, including nested jobs and children of exited roots.
             while (Program.Tree!.ActiveProcesses != 1)
             {
-                status.Text = "Ожидаю завершения процессов Jarvis…\nРесурсы ещё не освобождены.";
+                status.Text = Ui("Ожидаю завершения процессов Jarvis…\nРесурсы ещё не освобождены.", "Waiting for Jarvis processes to exit…\nResources have not been released yet.");
                 await Task.Delay(100);
             }
             backend?.Dispose();
             selectedDataMutex?.ReleaseMutex(); selectedDataMutex?.Dispose(); selectedDataMutex = null;
             try { Directory.Delete(profileDirectory, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             if (options.SmokeOutput is not null && Environment.ExitCode == 0)
-                File.WriteAllText(options.SmokeOutput, JsonSerializer.Serialize(new { success = backendStopped, owned_processes = 1, data_dir = options.DataDirectory, microphone_permission_tested = microphonePermissionTested, microphone_fake_stream_tested = microphoneFakeStreamTested, setup_completed = setupSmokeCompleted, window_chrome_tested = windowChromeTested }));
+                File.WriteAllText(options.SmokeOutput, JsonSerializer.Serialize(new { success = backendStopped, owned_processes = 1, data_dir = options.DataDirectory, microphone_permission_tested = microphonePermissionTested, microphone_fake_stream_tested = microphoneFakeStreamTested, setup_completed = setupSmokeCompleted, window_chrome_tested = windowChromeTested, language_switch_tested = languageSwitchTested }));
             canClose = true; Close();
         }
         catch (Exception error)
         {
-            status.Text = "Не удалось подтвердить завершение.\nРесурсы остаются под контролем Jarvis.\nКод: " + error.GetType().Name;
+            status.Text = Ui("Не удалось подтвердить завершение.\nРесурсы остаются под контролем Jarvis.\nКод: ", "Could not verify shutdown.\nResources remain under Jarvis control.\nCode: ") + error.GetType().Name;
             Environment.ExitCode = 1;
         }
     }
@@ -388,6 +391,7 @@ internal sealed partial class MainWindow : Form
         {
             await VerifyWindowChromeAsync();
             await VerifySettingsThemeAsync();
+            await VerifySettingsLanguageAsync();
             // A fixed integration scenario; there is no arbitrary page-to-native API.
             var result = await browser!.CoreWebView2.ExecuteScriptAsync("""
                 (async()=>{const s=await (await fetch('/api/session')).json();

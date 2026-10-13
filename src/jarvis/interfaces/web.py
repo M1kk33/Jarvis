@@ -43,6 +43,7 @@ from jarvis.domain.types import (
     RequestFailure,
     StaleTurnError,
 )
+from jarvis.interfaces.localization import render_page
 
 BODY_LIMIT = 131_072
 VISION_BODY_LIMIT = 3 * 1024 * 1024
@@ -97,6 +98,7 @@ class _Preferences(_Input):
     send_shortcut: str
     voice_volume: int
     output_tokens: int
+    language: str = "ru"
 
 
 def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -313,12 +315,8 @@ def create_web_app(
                 return RedirectResponse("/", status_code=303)
             except HTTPException:
                 pass
-        return Response(
-            resources.files("jarvis")
-            .joinpath("interfaces", "static", "setup.html")
-            .read_bytes(),
-            media_type="text/html",
-        )
+        language = (await settings.read()).language if settings is not None else "ru"
+        return Response(render_page("setup.html", language), media_type="text/html")
 
     @app.post("/api/setup")
     async def exchange_token(request: Request):
@@ -349,18 +347,15 @@ def create_web_app(
             authorize(request)
         except HTTPException:
             return RedirectResponse("/setup", status_code=303)
-        return Response(
-            resources.files("jarvis")
-            .joinpath("interfaces", "static", "index.html")
-            .read_bytes(),
-            media_type="text/html",
-        )
+        language = (await settings.read()).language if settings is not None else "ru"
+        return Response(render_page("index.html", language), media_type="text/html")
 
     @app.get("/static/{filename}")
     async def static_file(filename: str):
         if filename not in {
             "app.css",
             "app.js",
+            "i18n.js",
             "voice_player.js",
             "settings.js",
             "marked.umd.js",

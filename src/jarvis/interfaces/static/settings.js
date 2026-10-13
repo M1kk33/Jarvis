@@ -1,5 +1,11 @@
 "use strict";
 
+function st(source, ...values) {
+  if (window.JarvisI18n) return window.JarvisI18n.t(source, ...values);
+  return Array.isArray(source) ? source.reduce((text, part, index) => text + part + (index < values.length ? values[index] : ""), "") : source;
+}
+
+
 window.JarvisSettings = class {
   constructor({ api, onApply, getSelectedConversation = () => null }) {
     this.api = api;
@@ -8,7 +14,7 @@ window.JarvisSettings = class {
     this.statisticsScope = document.getElementById("statistics-scope");
     this.statisticsScope.addEventListener("change", () => this.loadStatistics());
     document.getElementById("refresh-statistics").addEventListener("click", () => this.openStatistics());
-    this.preferences = { theme: "dark", accent: "mint", text_size: 14, send_shortcut: "enter", voice_volume: 80, output_tokens: 2048 };
+    this.preferences = { theme: "dark", accent: "mint", text_size: 14, send_shortcut: "enter", voice_volume: 80, output_tokens: 2048, language: "ru" };
     this.defaults = { ...this.preferences };
     this.dialog = document.getElementById("settings-dialog");
     this.launch = document.getElementById("open-settings");
@@ -23,7 +29,7 @@ window.JarvisSettings = class {
     document.getElementById("close-settings").addEventListener("click", () => this.close());
     this.dialog.addEventListener("cancel", event => { event.preventDefault(); this.close(); });
     this.dialog.addEventListener("close", () => this.launch.focus());
-    document.getElementById("reset-settings").addEventListener("click", () => { if (this.saving) return; this.fill(this.defaults); this.status.textContent = "Нажмите «Сохранить», чтобы применить."; });
+    document.getElementById("reset-settings").addEventListener("click", () => { if (this.saving) return; this.fill(this.defaults); this.status.textContent = st("Нажмите «Сохранить», чтобы применить."); });
     document.getElementById("settings-form").addEventListener("submit", event => { event.preventDefault(); this.save(); });
     this.controls.voice_volume.addEventListener("input", () => this.updateVolumeLabel());
     this.tabs = [...document.querySelectorAll("[data-settings-tab]")];
@@ -44,8 +50,9 @@ window.JarvisSettings = class {
     if (!session.settings_enabled) return;
     this.statisticsEnabled = Boolean(session.statistics_enabled);
     document.getElementById("statistics-tab").hidden = !this.statisticsEnabled;
+    this.spokenEnabled = Boolean(session.spoken_enabled);
     this.controls.voice_volume.disabled = !session.spoken_enabled;
-    document.getElementById("setting-voice-availability").textContent = session.spoken_enabled ? "Голосовой модуль подключён." : "Голосовой модуль не подключён в текущем запуске.";
+    document.getElementById("setting-voice-availability").textContent = session.spoken_enabled ? st("Голосовой модуль подключён.") : st("Голосовой модуль не подключён в текущем запуске.");
     try {
       this.accept(await this.api("/api/settings"));
       this.launch.hidden = false;
@@ -58,11 +65,9 @@ window.JarvisSettings = class {
   }
 
   accept(result) {
-    this.preferences = { ...result.preferences };
+    this.preferences = { ...this.defaults, ...result.preferences };
+    this.result = result;
     this.loaded = true;
-    document.getElementById("setting-model-name").textContent = result.model_name;
-    document.getElementById("setting-context").textContent = `${result.context_tokens.toLocaleString("ru-RU")} токенов`;
-    document.getElementById("setting-active-output").textContent = `Сейчас действует: ${result.active_output_tokens.toLocaleString("ru-RU")} токенов.`;
     this.restartRequired = result.restart_required;
     this.apply();
   }
@@ -73,11 +78,22 @@ window.JarvisSettings = class {
     root.dataset.theme = p.theme === "system" ? (this.systemTheme.matches ? "light" : "dark") : p.theme;
     root.dataset.accent = p.accent;
     root.style.setProperty("--chat-text-size", `${p.text_size}px`);
-    this.onApply(p);
+    const languageChanged = window.JarvisI18n?.setLanguage(p.language) || false;
+    this.renderMetadata();
+    this.onApply(p, { languageChanged });
   }
 
   updateVolumeLabel() {
     document.getElementById("setting-volume-value").textContent = `${this.controls.voice_volume.value}%`;
+  }
+
+  renderMetadata() {
+    if (!this.result) return;
+    const locale = window.JarvisI18n?.locale() || "ru-RU";
+    document.getElementById("setting-model-name").textContent = this.result.model_name;
+    document.getElementById("setting-context").textContent = st`${this.result.context_tokens.toLocaleString(locale)} токенов`;
+    document.getElementById("setting-active-output").textContent = st`Сейчас действует: ${this.result.active_output_tokens.toLocaleString(locale)} токенов.`;
+    document.getElementById("setting-voice-availability").textContent = this.spokenEnabled ? st("Голосовой модуль подключён.") : st("Голосовой модуль не подключён в текущем запуске.");
   }
 
   fill(preferences) {
@@ -88,7 +104,7 @@ window.JarvisSettings = class {
   async open() {
     if (this.dialog.open) return;
     this.fill(this.preferences);
-    this.status.textContent = this.restartRequired ? "Изменение лимита ожидает перезапуска." : "";
+    this.status.textContent = this.restartRequired ? st("Изменение лимита ожидает перезапуска.") : "";
     this.dialog.showModal();
     if (this.statisticsActive) this.openStatistics();
     const generation = this.readGeneration = (this.readGeneration || 0) + 1;
@@ -100,7 +116,7 @@ window.JarvisSettings = class {
       if (generation !== this.readGeneration) return;
       this.accept(result);
       this.fill(this.preferences);
-      this.status.textContent = this.restartRequired ? "Изменение лимита ожидает перезапуска." : "";
+      this.status.textContent = this.restartRequired ? st("Изменение лимита ожидает перезапуска.") : "";
     } catch (error) { if (generation === this.readGeneration) this.status.textContent = error.message; }
     finally {
       if (generation === this.readGeneration) {
@@ -119,7 +135,7 @@ window.JarvisSettings = class {
     if (!this.statisticsEnabled || !this.dialog.open || !this.statisticsActive) return;
     const generation = this.statisticsGeneration = (this.statisticsGeneration || 0) + 1;
     const status = document.getElementById("statistics-status");
-    status.textContent = "Загружаю…";
+    status.textContent = st("Загружаю…");
     document.getElementById("statistics-results").hidden = true;
     try {
       const { conversations } = await this.api("/api/conversations");
@@ -128,7 +144,7 @@ window.JarvisSettings = class {
       const current = this.getSelectedConversation();
       const option = (value, text) => { const node = document.createElement("option"); node.value = value; node.textContent = text; return node; };
       const ordered = [...conversations].sort((a, b) => Number(b.id === current) - Number(a.id === current));
-      this.statisticsScope.replaceChildren(option("", "Все диалоги"), ...ordered.map(chat => option(chat.id, chat.title + (chat.id === current ? " · текущий" : ""))));
+      this.statisticsScope.replaceChildren(option("", st("Все диалоги")), ...ordered.map(chat => option(chat.id, chat.title + (chat.id === current ? st(" · текущий") : ""))));
       this.statisticsScope.value = conversations.some(chat => chat.id === previous) ? previous : "";
       await this.loadStatistics();
     } catch (error) { if (generation === this.statisticsGeneration) status.textContent = error.message; }
@@ -139,24 +155,25 @@ window.JarvisSettings = class {
     const generation = this.statisticsGeneration = (this.statisticsGeneration || 0) + 1;
     const status = document.getElementById("statistics-status");
     const results = document.getElementById("statistics-results");
-    status.textContent = "Загружаю…";
+    status.textContent = st("Загружаю…");
     results.hidden = true;
     try {
       const scope = this.statisticsScope.value;
       const data = await this.api("/api/statistics" + (scope ? `?conversation_id=${encodeURIComponent(scope)}` : ""));
       if (generation !== this.statisticsGeneration) return;
-      const number = value => value.toLocaleString("ru-RU");
+      const locale = window.JarvisI18n?.locale() || "ru-RU";
+      const number = value => value.toLocaleString(locale);
       const put = (id, text) => { document.getElementById(`statistics-${id}`).textContent = text; };
       for (const key of ["conversations", "user_messages", "assistant_messages", "regenerations", "generated_images", "failed_turns", "interrupted_turns", "pending_turns"]) put(key.replaceAll("_", "-"), number(data[key]));
-      for (const [key, total] of [["input_tokens", data.user_messages], ["output_tokens", data.assistant_messages]]) put(key.replaceAll("_", "-"), data[key] === null ? (total === 0 ? "0" : "Нет данных") : number(data[key]));
+      for (const [key, total] of [["input_tokens", data.user_messages], ["output_tokens", data.assistant_messages]]) put(key.replaceAll("_", "-"), data[key] === null ? (total === 0 ? "0" : st("Нет данных")) : number(data[key]));
       const missing = data.counted_user_messages < data.user_messages || data.counted_assistant_messages < data.assistant_messages;
-      put("coverage", `Токены учтены для ${number(data.counted_user_messages)} из ${number(data.user_messages)} сообщений и ${number(data.counted_assistant_messages)} из ${number(data.assistant_messages)} ответов.` + (missing ? " Для остальных нет данных о токенах." : ""));
-      const date = value => value ? new Date(value).toLocaleString("ru-RU", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+      put("coverage", st`Токены учтены для ${number(data.counted_user_messages)} из ${number(data.user_messages)} сообщений и ${number(data.counted_assistant_messages)} из ${number(data.assistant_messages)} ответов.` + (missing ? st(" Для остальных нет данных о токенах.") : ""));
+      const date = value => value ? new Date(value).toLocaleString(locale, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
       put("first-message", date(data.first_message_at));
       put("last-message", date(data.last_message_at));
       put("unfinished", number(data.failed_turns + data.interrupted_turns + data.pending_turns));
       document.getElementById("statistics-empty").hidden = data.user_messages !== 0;
-      status.textContent = "За всё время · обновлено " + new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+      status.textContent = st("За всё время · обновлено ") + new Date().toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
       results.hidden = false;
     } catch (error) { if (generation === this.statisticsGeneration) status.textContent = error.message; }
   }
@@ -168,10 +185,10 @@ window.JarvisSettings = class {
     this.saveButton.disabled = true;
     this.fields.disabled = true;
     this.resetButton.disabled = true;
-    this.status.textContent = "Сохраняю…";
+    this.status.textContent = st("Сохраняю…");
     try {
       this.accept(await this.api("/api/settings", "POST", preferences));
-      this.status.textContent = this.restartRequired ? "Сохранено. Перезапустите Jarvis для изменения лимита." : "Сохранено";
+      this.status.textContent = this.restartRequired ? st("Сохранено. Перезапустите Jarvis для изменения лимита.") : st("Сохранено");
     } catch (error) { this.status.textContent = error.message; }
     finally { this.saving = false; this.saveButton.disabled = false; this.fields.disabled = false; this.resetButton.disabled = false; }
   }

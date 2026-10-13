@@ -1,5 +1,11 @@
 "use strict";
 
+function tr(source, ...values) {
+  if (window.JarvisI18n) return window.JarvisI18n.t(source, ...values);
+  return Array.isArray(source) ? source.reduce((text, part, index) => text + part + (index < values.length ? values[index] : ""), "") : source;
+}
+
+
 const notice = document.getElementById("notice");
 const setupForm = document.getElementById("setup-form");
 
@@ -9,7 +15,7 @@ function say(message) {
 
 async function responseJson(response) {
   const value = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(value.detail || `Request failed (${response.status})`);
+  if (!response.ok) throw new Error(tr(value.detail || `Request failed (${response.status})`));
   return value;
 }
 
@@ -227,14 +233,14 @@ if (setupForm) {
     panel.className = "welcome";
     line(panel, "J", "brand-mark");
     const heading = document.createElement("h2");
-    heading.textContent = "Чем могу помочь?";
+    heading.textContent = tr("Чем могу помочь?");
     panel.append(heading);
     const subtitle = document.createElement("p");
-    subtitle.textContent = "Разберём идею, найдём решение или просто поговорим. Начните с того, что важно вам.";
+    subtitle.textContent = tr("Разберём идею, найдём решение или просто поговорим. Начните с того, что важно вам.");
     panel.append(subtitle);
     const suggestions = document.createElement("div");
     suggestions.className = "suggestions";
-    for (const [label, text] of [["Разобраться в теме", "Помоги разобраться в теме: "], ["Составить план", "Помоги составить план для "], ["Обсудить идею", "Давай обсудим идею: "]]) {
+    for (const [label, text] of [[tr("Разобраться в теме"), tr("Помоги разобраться в теме: ")], [tr("Составить план"), tr("Помоги составить план для ")], [tr("Обсудить идею"), tr("Давай обсудим идею: ")]]) {
       suggestions.append(button(label, () => { setInput(text); inputNode.focus(); }));
     }
     panel.append(suggestions);
@@ -256,15 +262,15 @@ if (setupForm) {
   }
 
   async function attachScreenshot(file) {
-    if (visionControls.hidden) { say("Распознавание скриншотов не подключено."); return; }
+    if (visionControls.hidden) { say(tr("Распознавание скриншотов не подключено.")); return; }
     if (!file || !["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
-      say("Прикрепите изображение PNG, JPEG или WebP."); return;
+      say(tr("Прикрепите изображение PNG, JPEG или WebP.")); return;
     }
-    if (file.size > 20 * 1024 * 1024) { say("Исходное изображение должно быть не больше 20 МиБ."); return; }
+    if (file.size > 20 * 1024 * 1024) { say(tr("Исходное изображение должно быть не больше 20 МиБ.")); return; }
     const generation = ++attachmentGeneration;
     attachmentPending = true;
     attachmentPreview.hidden = false;
-    screenshotStatus.textContent = "Подготавливаю скриншот…";
+    screenshotStatus.textContent = tr("Подготавливаю скриншот…");
     let bitmap;
     try {
       bitmap = await createImageBitmap(file);
@@ -275,12 +281,12 @@ if (setupForm) {
       let png;
       for (;;) {
         const context = canvas.getContext("2d");
-        if (!context) throw new Error("Не удалось подготовить скриншот.");
+        if (!context) throw new Error(tr("Не удалось подготовить скриншот."));
         context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
         png = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-        if (!png) throw new Error("Не удалось прочитать изображение.");
+        if (!png) throw new Error(tr("Не удалось прочитать изображение."));
         if (png.size <= 2 * 1024 * 1024) break;
-        if (Math.max(canvas.width, canvas.height) <= 256) throw new Error("Не удалось уменьшить скриншот до 2 МиБ.");
+        if (Math.max(canvas.width, canvas.height) <= 256) throw new Error(tr("Не удалось уменьшить скриншот до 2 МиБ."));
         canvas.width = Math.max(1, Math.floor(canvas.width * 0.8));
         canvas.height = Math.max(1, Math.floor(canvas.height * 0.8));
       }
@@ -292,13 +298,13 @@ if (setupForm) {
       screenshotPreview.hidden = false;
       removeScreenshot.hidden = false;
       const resized = canvas.width !== bitmap.width || canvas.height !== bitmap.height;
-      screenshotStatus.textContent = `${resized ? "Уменьшен до" : "Скриншот"} ${canvas.width} × ${canvas.height} · готов к отправке`;
+      screenshotStatus.textContent = tr`${resized ? tr("Уменьшен до") : tr("Скриншот")} ${canvas.width} × ${canvas.height} · готов к отправке`;
       say("");
     } catch (error) {
       if (generation === attachmentGeneration) {
-        screenshotStatus.textContent = screenshotFile ? "Предыдущий скриншот сохранён." : "";
+        screenshotStatus.textContent = screenshotFile ? tr("Предыдущий скриншот сохранён.") : "";
         attachmentPreview.hidden = !screenshotFile;
-        say(error.message || "Не удалось прочитать изображение.");
+        say(error.message || tr("Не удалось прочитать изображение."));
       }
     } finally {
       bitmap?.close();
@@ -332,7 +338,7 @@ if (setupForm) {
     const files = [...(event.dataTransfer?.files || [])];
     if (!files.length) return;
     event.preventDefault();
-    if (files.length !== 1) { say("Прикрепите один скриншот за раз."); return; }
+    if (files.length !== 1) { say(tr("Прикрепите один скриншот за раз.")); return; }
     attachScreenshot(files[0]);
   });
 
@@ -378,16 +384,16 @@ if (setupForm) {
   }
 
   function statusLabel(value) {
-    return ({ queued: "В очереди", running: "Выполняется", waiting_approval: "Ожидает подтверждения",
-      succeeded: "Готово", complete: "Завершено", cancelled: "Отменено", interrupted: "Прервано",
-      failed: "Ошибка", pending: "Ожидание", streaming: "Формирую ответ", loading: "Загружаю модель",
-      image_loading: "Подготавливаю модель изображений", image_generating: "Генерирую изображение",
-      image_finalizing: "Сохраняю изображение",
-      cancel_requested: "Отменяется", created: "Создано", started: "Начато" })[value] || value.replaceAll("_", " ");
+    return ({ queued: tr("В очереди"), running: tr("Выполняется"), waiting_approval: tr("Ожидает подтверждения"),
+      succeeded: tr("Готово"), complete: tr("Завершено"), cancelled: tr("Отменено"), interrupted: tr("Прервано"),
+      failed: tr("Ошибка"), pending: tr("Ожидание"), streaming: tr("Формирую ответ"), loading: tr("Загружаю модель"),
+      image_loading: tr("Подготавливаю модель изображений"), image_generating: tr("Генерирую изображение"),
+      image_finalizing: tr("Сохраняю изображение"),
+      cancel_requested: tr("Отменяется"), created: tr("Создано"), started: tr("Начато") })[value] || value.replaceAll("_", " ");
   }
 
   function jobLabel(job) {
-    if (job.error_code === "output_limit") return "Достигнут лимит длины ответа";
+    if (job.error_code === "output_limit") return tr("Достигнут лимит длины ответа");
     return statusLabel(job.status === "running" ? (job.progress || job.status) : job.status);
   }
 
@@ -398,7 +404,7 @@ if (setupForm) {
     jobUpdates.set(job.turn_id, job);
     if (jobUpdates.size > 64) jobUpdates.delete(jobUpdates.keys().next().value);
     const node = turnStatusNodes.get(job.turn_id);
-    if (node) node.textContent = `Состояние: ${jobLabel(job)}`;
+    if (node) node.textContent = tr`Состояние: ${jobLabel(job)}`;
   }
 
   const voicePlayer = new window.JarvisVoicePlayer({
@@ -414,34 +420,36 @@ if (setupForm) {
     },
     AudioContextType: window.AudioContext || window.webkitAudioContext,
     onStatus: (message) => {
-      voiceStatus.textContent = ({ "Playback stopped.": "", "Audio playback is unavailable.": "Воспроизведение недоступно.",
-        "Preparing voice…": "Готовлю озвучивание…", "Playback finished.": "Озвучивание завершено.",
-        "Voice failed. The text is still available.": "Озвучивание не удалось. Ответ доступен в тексте.",
-        "Only a completed assistant reply can be spoken": "Можно озвучить только завершённый ответ." })[message]
-        ?? message.replace(/Preparing voice (\d+) of (\d+)…/, "Готовлю озвучивание $1 из $2…").replace(/Speaking (\d+) of (\d+)…/, "Озвучивание $1 из $2…");
+      voiceStatus.textContent = ({ "Playback stopped.": "", "Audio playback is unavailable.": tr("Воспроизведение недоступно."),
+        "Preparing voice…": tr("Готовлю озвучивание…"), "Playback finished.": tr("Озвучивание завершено."),
+        "Voice failed. The text is still available.": tr("Озвучивание не удалось. Ответ доступен в тексте."),
+        "Only a completed assistant reply can be spoken": tr("Можно озвучить только завершённый ответ.") })[message]
+        ?? message.replace(/Preparing voice (\d+) of (\d+)…/, tr("Готовлю озвучивание $1 из $2…")).replace(/Speaking (\d+) of (\d+)…/, tr("Озвучивание $1 из $2…"));
     },
     onActive: (active) => {
       stopVoiceButton.hidden = !active;
       for (const [id, item] of speakButtons) {
         const playing = active && voicePlayer.active?.messageId === id;
-        item.title = playing ? "Остановить озвучивание" : "Озвучить";
+        item.title = playing ? tr("Остановить озвучивание") : tr("Озвучить");
         item.setAttribute("aria-label", item.title);
         item.setAttribute("aria-pressed", String(Boolean(playing)));
       }
     },
   });
 
-  const settings = new window.JarvisSettings({ api, getSelectedConversation: () => state.selected, onApply: (preferences) => {
+  const settings = new window.JarvisSettings({ api, getSelectedConversation: () => state.selected, onApply: (preferences, { languageChanged = false } = {}) => {
     voicePlayer.setVolume(preferences.voice_volume / 100);
-    document.getElementById("send-button").title = preferences.send_shortcut === "enter" ? "Отправить (Enter)" : "Отправить (Ctrl + Enter)";
+    document.getElementById("send-button").title = preferences.send_shortcut === "enter" ? tr("Отправить (Enter)") : tr("Отправить (Ctrl + Enter)");
     resizeInput();
+    if (languageChanged && state.csrf) refreshAll().catch(error => say(error.message));
   } });
 
   async function refreshConversation() {
+    titleNode.removeAttribute("data-i18n");
     const generation = ++messageRefreshGeneration;
     if (!state.selected) {
       voicePlayer.stop();
-      titleNode.textContent = "Новый диалог";
+      titleNode.textContent = tr("Новый диалог");
       messagesNode.replaceChildren();
       turnStatusNodes.clear();
       draftNodes.clear();
@@ -508,16 +516,16 @@ if (setupForm) {
       feedback.className = "reply-feedback";
       feedback.setAttribute("role", "status");
       if (message && turn.status === "complete") {
-        const copy = iconButton("Копировать ответ", "M9 5V3h11v13h-3M4 8h11v13H4z", async () => {
+        const copy = iconButton(tr("Копировать ответ"), "M9 5V3h11v13h-3M4 8h11v13H4z", async () => {
           try {
             await navigator.clipboard.writeText(message.text);
-            feedback.textContent = "Скопировано";
-          } catch (_) { feedback.textContent = "Не удалось скопировать. Выделите текст и нажмите Ctrl+C."; }
+            feedback.textContent = tr("Скопировано");
+          } catch (_) { feedback.textContent = tr("Не удалось скопировать. Выделите текст и нажмите Ctrl+C."); }
         });
         actions.append(copy);
         if (state.spokenEnabled) {
           const playing = voicePlayer.isPlaying(selected, turn.id, message.id);
-          const speak = iconButton(playing ? "Остановить озвучивание" : "Озвучить", "M11 4 5 9H2v6h3l6 5zM15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14", () => {
+          const speak = iconButton(playing ? tr("Остановить озвучивание") : tr("Озвучить"), "M11 4 5 9H2v6h3l6 5zM15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14", () => {
             if (voicePlayer.isPlaying(selected, turn.id, message.id)) voicePlayer.stop();
             else voicePlayer.play(selected, turn.id, message.id);
           });
@@ -526,7 +534,7 @@ if (setupForm) {
           actions.append(speak);
         }
         if (root === latestRoot) {
-          const retry = iconButton("Перегенерировать ответ", "M20 10a8 7 0 0 0-13.7-4.8L3 8m0-4v4h4M4 14a8 7 0 0 0 13.7 4.8L21 16m0 4v-4h-4", async () => {
+          const retry = iconButton(tr("Перегенерировать ответ"), "M20 10a8 7 0 0 0-13.7-4.8L3 8m0-4v4h4M4 14a8 7 0 0 0 13.7 4.8L21 16m0 4v-4h-4", async () => {
             if (regenerating || retry.disabled) return;
             regenerating = true;
             retry.disabled = true;
@@ -558,17 +566,17 @@ if (setupForm) {
           replyVersions.set(root, { latest: versions.at(-1).id, selected: versions[index + offset].id });
           await refreshConversation();
         };
-        const previous = iconButton("Предыдущая версия ответа", "m14 6-6 6 6 6", () => move(-1));
-        const next = iconButton("Следующая версия ответа", "m10 6 6 6-6 6", () => move(1));
+        const previous = iconButton(tr("Предыдущая версия ответа"), "m14 6-6 6 6 6", () => move(-1));
+        const next = iconButton(tr("Следующая версия ответа"), "m10 6 6 6-6 6", () => move(1));
         previous.disabled = index === 0;
         next.disabled = index === versions.length - 1;
         const counter = document.createElement("span");
         counter.className = "reply-version";
         counter.textContent = `${index + 1} / ${versions.length}`;
-        counter.setAttribute("aria-label", `Версия ответа ${index + 1} из ${versions.length}`);
+        counter.setAttribute("aria-label", tr`Версия ответа ${index + 1} из ${versions.length}`);
         actions.append(previous, counter, next);
-        counter.title = "Просмотр сохранённых версий. Для продолжения используется последняя завершённая версия.";
-        if (index < versions.length - 1) feedback.textContent = "Просмотр прежней версии";
+        counter.title = tr("Просмотр сохранённых версий. Для продолжения используется последняя завершённая версия.");
+        if (index < versions.length - 1) feedback.textContent = tr("Просмотр прежней версии");
       }
       actions.append(feedback);
       card.append(actions);
@@ -589,13 +597,13 @@ if (setupForm) {
         }
         const preview = document.createElement("img");
         preview.className = "generated-image";
-        preview.alt = kind === "screenshot/png" ? "Исходный скриншот" : `Generated image ${artifact.id}`;
+        preview.alt = kind === "screenshot/png" ? tr("Исходный скриншот") : `Generated image ${artifact.id}`;
         preview.loading = "lazy";
         preview.src = `/api/artifacts/${artifact.id}/preview`;
         card.append(preview);
         const download = document.createElement("a");
         download.href = `/api/artifacts/${artifact.id}`;
-        download.textContent = kind === "screenshot/png" ? "Скачать исходный скриншот" : `Скачать изображение ${artifact.id}`;
+        download.textContent = kind === "screenshot/png" ? tr("Скачать исходный скриншот") : tr`Скачать изображение ${artifact.id}`;
         card.append(download);
       }
       return rendered;
@@ -604,7 +612,7 @@ if (setupForm) {
       if (!visibleTurns.has(message.turn_id)) continue;
       const card = document.createElement("article");
       card.className = `message ${message.role}`;
-      line(card, message.role === "user" ? "Вы" : "Jarvis", "role");
+      line(card, message.role === "user" ? tr("Вы") : "Jarvis", "role");
       const content = document.createElement(message.role === "assistant" ? "div" : "pre");
       if (message.role === "assistant") {
         content.className = "markdown";
@@ -618,21 +626,21 @@ if (setupForm) {
           const toolFailed = toolResult?.status === "error";
           if (toolFailed && toolResult.code === "out_of_memory") {
             const memory = toolResult.memory;
-            let explanation = "Генерация не запущена: недостаточно свободной памяти с учётом защитного резерва. Закройте тяжёлые приложения и отправьте новый запрос.";
+            let explanation = tr("Генерация не запущена: недостаточно свободной памяти с учётом защитного резерва. Закройте тяжёлые приложения и отправьте новый запрос.");
             if (memory && ["ram", "vram"].includes(memory.resource)) {
-              const kind = memory.resource === "ram" ? "ОЗУ" : "видеопамяти";
+              const kind = memory.resource === "ram" ? tr("ОЗУ") : tr("видеопамяти");
               explanation = Number.isFinite(memory.available_gib) && Number.isFinite(memory.required_gib)
-                ? `Для генерации нужно ${memory.required_gib.toFixed(1)} ГиБ свободной ${kind} с учётом резерва. На момент запроса было ${memory.available_gib.toFixed(1)} ГиБ. Освободите память и отправьте новый запрос.`
-                : `Не удалось проверить свободный объём ${kind}. Генерация не запущена.`;
+                ? tr`Для генерации нужно ${memory.required_gib.toFixed(1)} ГиБ свободной ${kind} с учётом резерва. На момент запроса было ${memory.available_gib.toFixed(1)} ГиБ. Освободите память и отправьте новый запрос.`
+                : tr`Не удалось проверить свободный объём ${kind}. Генерация не запущена.`;
             }
             line(card, explanation, "notice");
           }
           const details = document.createElement("details");
           const label = document.createElement("summary");
-          label.textContent = `${item.name}: ${toolFailed ? "не выполнено" : statusLabel(item.status)}${item.acknowledged_at ? " (неизвестный результат подтверждён)" : ""} · подробности`;
+          label.textContent = tr`${item.name}: ${toolFailed ? tr("не выполнено") : statusLabel(item.status)}${item.acknowledged_at ? tr(" (неизвестный результат подтверждён)") : ""} · подробности`;
           details.append(label);
           const receipt = document.createElement("pre");
-          receipt.textContent = `Назначение: ${item.target_identity}\nArguments: ${item.arguments_json}\nReceipt: ${item.receipt_json || "none"}\nResult: ${item.result_json || "none"}`;
+          receipt.textContent = tr`Назначение: ${item.target_identity}\nArguments: ${item.arguments_json}\nReceipt: ${item.receipt_json || "none"}\nResult: ${item.result_json || "none"}`;
           details.append(receipt);
           card.append(details);
         }
@@ -641,11 +649,11 @@ if (setupForm) {
           const job = jobUpdates.get(turn.id);
           const details = button("", () => showActivity(true), true);
           details.className = "turn-status";
-          details.title = "Показать действия по запросу";
+          details.title = tr("Показать действия по запросу");
           details.setAttribute("aria-controls", "activity-panel");
           const node = document.createElement("span");
           node.className = "subtle";
-          node.textContent = `Состояние: ${job ? jobLabel(job) : turn.error_code === "output_limit" ? "Достигнут лимит длины ответа" : statusLabel(turn.status)}`;
+          node.textContent = tr`Состояние: ${job ? jobLabel(job) : turn.error_code === "output_limit" ? tr("Достигнут лимит длины ответа") : statusLabel(turn.status)}`;
           node.setAttribute("role", "status");
           details.append(node);
           card.append(details);
@@ -669,12 +677,12 @@ if (setupForm) {
         window.JarvisMarkdown.render(content, draftText);
         partial.append(content);
         if (turn.error_code === "output_limit") {
-          line(partial, "Ответ остановлен на лимите длины. Попросите более краткий ответ или разбейте вопрос на части.", "subtle");
+          line(partial, tr("Ответ остановлен на лимите длины. Попросите более краткий ответ или разбейте вопрос на части."), "subtle");
         }
         // A committed image belongs to Jarvis even before text arrives or after failure.
         const hasArtifacts = appendArtifacts(partial, turn.id, "image/png");
         const hasVersions = groups.get(turn.regeneration_of || turn.id).length > 1;
-        if (hasVersions && !draftText && !hasArtifacts) line(partial, turn.status === "pending" ? "Готовлю новую версию ответа…" : "Новая версия не завершена. Прежний ответ сохранён.", "subtle");
+        if (hasVersions && !draftText && !hasArtifacts) line(partial, turn.status === "pending" ? tr("Готовлю новую версию ответа…") : tr("Новая версия не завершена. Прежний ответ сохранён."), "subtle");
         appendReplyActions(partial, turn);
         partial.hidden = !draftText && !hasArtifacts && !hasVersions;
         draftNodes.set(turn.id, { card: partial, content, hasArtifacts });
@@ -692,7 +700,7 @@ if (setupForm) {
     const target = deletionTarget;
     deleting = true;
     deleteConfirm.disabled = deleteCancel.disabled = true;
-    deleteStatus.textContent = "Удаляю…";
+    deleteStatus.textContent = tr("Удаляю…");
     try {
       await api(`/api/conversations/${encodeURIComponent(target.id)}`, "DELETE", {});
     } catch (error) {
@@ -722,8 +730,8 @@ if (setupForm) {
       await refreshAll();
       if (!state.selected) inputNode.focus();
       else conversationsNode.querySelector?.(".conversation-title[aria-current='true']")?.focus();
-      say("Диалог удалён.");
-    } catch (error) { say(`Диалог удалён. Не удалось обновить список: ${error.message}`); }
+      say(tr("Диалог удалён."));
+    } catch (error) { say(tr`Диалог удалён. Не удалось обновить список: ${error.message}`); }
   });
 
   async function refreshConversations(focusPin = null, focusId = null) {
@@ -766,7 +774,7 @@ if (setupForm) {
         finally { pin.disabled = false; }
       });
       pin.className = "pin-chat";
-      pin.title = conversation.pinned ? "Открепить диалог" : "Закрепить диалог";
+      pin.title = conversation.pinned ? tr("Открепить диалог") : tr("Закрепить диалог");
       pin.setAttribute("aria-label", `${pin.title}: ${conversation.title}`);
       pin.setAttribute("aria-pressed", String(Boolean(conversation.pinned)));
       const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -785,8 +793,8 @@ if (setupForm) {
         deleteCancel.focus();
       });
       remove.className = "delete-chat";
-      remove.title = "Удалить диалог";
-      remove.setAttribute("aria-label", `Удалить диалог: ${conversation.title}`);
+      remove.title = tr("Удалить диалог");
+      remove.setAttribute("aria-label", tr`Удалить диалог: ${conversation.title}`);
       const trash = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       trash.setAttribute("viewBox", "0 0 24 24");
       trash.setAttribute("aria-hidden", "true");
@@ -836,7 +844,7 @@ if (setupForm) {
     if (state.selected !== selected) return;
     jobsNode.replaceChildren();
     const visible = data.jobs.filter((job) => job.conversation_id === state.selected).slice(-10).reverse();
-    if (!visible.length) line(jobsNode, "Здесь появится ход выполнения ваших запросов.", "empty");
+    if (!visible.length) line(jobsNode, tr("Здесь появится ход выполнения ваших запросов."), "empty");
     for (const job of visible) {
       updateJobProgress(job);
       const card = document.createElement("div");
@@ -844,13 +852,13 @@ if (setupForm) {
       line(card, jobLabel(job));
       line(card, statusLabel(job.progress), "subtle");
       if (!["succeeded", "failed", "cancelled"].includes(job.status)) {
-        card.append(button("Отменить", async () => {
+        card.append(button(tr("Отменить"), async () => {
           try { await api(`/api/jobs/${encodeURIComponent(job.id)}/cancel`, "POST"); await refreshJobs(); }
           catch (error) { say(error.message); }
         }, true));
       }
       if (["queued", "interrupted", "waiting_approval"].includes(job.status)) {
-        card.append(button("Продолжить", async () => {
+        card.append(button(tr("Продолжить"), async () => {
           try { await api(`/api/jobs/${encodeURIComponent(job.id)}/resume`, "POST"); listen(job.id); await refreshJobs(); }
           catch (error) { say(error.message); }
         }));
@@ -872,47 +880,47 @@ if (setupForm) {
     ]);
     const newAttention = [...nextAttention].some((id) => !attentionIds.has(id));
     attentionIds = nextAttention;
-    attentionNotice.textContent = `Требуют внимания: ${attentionIds.size}`;
+    attentionNotice.textContent = tr`Требуют внимания: ${attentionIds.size}`;
     showActivity(newAttention || !activityPanel.hidden);
-    if (!visible.length && !(data.uncertain_actions || []).length && !(data.uncertain_files || []).length) line(approvalsNode, "Всё спокойно. Подтверждения не требуются.", "empty");
+    if (!visible.length && !(data.uncertain_actions || []).length && !(data.uncertain_files || []).length) line(approvalsNode, tr("Всё спокойно. Подтверждения не требуются."), "empty");
     for (const item of visible) {
       const card = document.createElement("div");
       card.className = "card";
       line(card, `${item.name} · version ${item.version}`);
-      line(card, `Назначение: ${item.target}`, "subtle");
+      line(card, tr`Назначение: ${item.target}`, "subtle");
       line(card, `Job: ${item.job_id} · policy: ${item.policy_version}`, "subtle");
       if (item.name === "create_text_file" && item.preview) {
-        line(card, `Создать файл: ${item.preview.path}`);
-        line(card, "Точное содержимое файла (UTF-8):");
+        line(card, tr`Создать файл: ${item.preview.path}`);
+        line(card, tr("Точное содержимое файла (UTF-8):"));
         const content = document.createElement("pre");
         content.textContent = item.preview.content;
         card.append(content);
       } else if (item.name === "fetch_public_page" && item.preview) {
-        line(card, "Отправить один GET-запрос по указанному адресу:");
+        line(card, tr("Отправить один GET-запрос по указанному адресу:"));
         const url = document.createElement("pre");
         url.textContent = item.preview.url;
         card.append(url);
-        line(card, "Сайт получит весь адрес и параметры запроса. Проверьте, нет ли в них личных данных. Перенаправление потребует нового запроса.", "subtle");
+        line(card, tr("Сайт получит весь адрес и параметры запроса. Проверьте, нет ли в них личных данных. Перенаправление потребует нового запроса."), "subtle");
       } else if (item.name === "render_public_page" && item.preview) {
-        line(card, "Загрузить указанный адрес и отобразить HTML во временном браузере без доступа к сети:");
+        line(card, tr("Загрузить указанный адрес и отобразить HTML во временном браузере без доступа к сети:"));
         const url = document.createElement("pre");
         url.textContent = item.preview.url;
         card.append(url);
-        line(card, "Сайт получит весь адрес и параметры запроса. Проверьте, нет ли личных данных. Встроенный JavaScript выполняется; внешние ресурсы, запросы страницы и перенаправления заблокированы.", "subtle");
+        line(card, tr("Сайт получит весь адрес и параметры запроса. Проверьте, нет ли личных данных. Встроенный JavaScript выполняется; внешние ресурсы, запросы страницы и перенаправления заблокированы."), "subtle");
       } else {
         const argumentsText = document.createElement("pre");
         argumentsText.textContent = item.arguments;
         card.append(argumentsText);
       }
       if (item.actionable) {
-        card.append(button("Разрешить", async () => {
+        card.append(button(tr("Разрешить"), async () => {
           try { await api(`/api/approvals/${encodeURIComponent(item.invocation_id)}/approve`, "POST"); listen(item.job_id); await refreshApprovals(); }
           catch (error) { say(error.message); }
         }));
       } else {
-        line(card, "Подтверждение устарело. Отмените задачу и создайте новый запрос.", "subtle");
+        line(card, tr("Подтверждение устарело. Отмените задачу и создайте новый запрос."), "subtle");
       }
-      card.append(button("Отклонить", async () => {
+      card.append(button(tr("Отклонить"), async () => {
         try { await api(`/api/approvals/${encodeURIComponent(item.invocation_id)}/reject`, "POST"); await refreshAll(); }
         catch (error) { say(error.message); }
       }, true));
@@ -921,9 +929,9 @@ if (setupForm) {
     for (const item of data.uncertain_files || []) {
       const card = document.createElement("div");
       card.className = "card";
-      line(card, `Создание файла не подтверждено: ${item.path}`);
-      line(card, "Проверка сверяет указанный файл и его содержимое. Она не создаёт файл.", "subtle");
-      card.append(button("Проверить файл", async () => {
+      line(card, tr`Создание файла не подтверждено: ${item.path}`);
+      line(card, tr("Проверка сверяет указанный файл и его содержимое. Она не создаёт файл."), "subtle");
+      card.append(button(tr("Проверить файл"), async () => {
         try { await api(`/api/file-reconciliation/${encodeURIComponent(item.invocation_id)}`, "POST"); await refreshAll(); }
         catch (error) { say(error.message); }
       }));
@@ -932,13 +940,13 @@ if (setupForm) {
     for (const item of data.uncertain_actions || []) {
       const card = document.createElement("div");
       card.className = "card";
-      line(card, `Неизвестный результат: ${item.name}`);
-      line(card, `Назначение: ${item.target_identity}`, "subtle");
+      line(card, tr`Неизвестный результат: ${item.name}`);
+      line(card, tr`Назначение: ${item.target_identity}`, "subtle");
       const proposal = document.createElement("pre");
       proposal.textContent = item.arguments_json;
       card.append(proposal);
-      line(card, "Сначала отмените задачу. Подтверждение позволит отправлять новые сообщения. Результат останется неизвестным; действие не будет повторено.", "subtle");
-      card.append(button("Подтвердить неизвестный результат", async () => {
+      line(card, tr("Сначала отмените задачу. Подтверждение позволит отправлять новые сообщения. Результат останется неизвестным; действие не будет повторено."), "subtle");
+      card.append(button(tr("Подтвердить неизвестный результат"), async () => {
         try { await api(`/api/uncertain-actions/${encodeURIComponent(item.id)}/acknowledge`, "POST"); await refreshAll(); }
         catch (error) { say(error.message); }
       }));
@@ -975,13 +983,13 @@ if (setupForm) {
   document.getElementById("send-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (deleting) return;
-    if (attachmentPending) { say("Дождитесь подготовки скриншота."); return; }
+    if (attachmentPending) { say(tr("Дождитесь подготовки скриншота.")); return; }
     voicePlayer.stop();
     const text = inputNode.value;
     if (!text.trim()) { inputNode.focus(); return; }
     const screenshot = screenshotFile;
     if (screenshot && text.length > 1024) {
-      say("Вопрос к скриншоту — не более 1 024 символов.");
+      say(tr("Вопрос к скриншоту — не более 1 024 символов."));
       return;
     }
     if (!state.pending || state.pending.text !== text || state.pending.file !== screenshot) {
@@ -1025,13 +1033,13 @@ if (setupForm) {
 
   recordButton.addEventListener("click", async () => {
     if (!navigator.mediaDevices || !window.MediaRecorder) {
-      speechStatus.textContent = "Запись с микрофона недоступна.";
+      speechStatus.textContent = tr("Запись с микрофона недоступна.");
       return;
     }
     const mimeType = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus"]
       .find((type) => MediaRecorder.isTypeSupported(type));
     if (!mimeType) {
-      speechStatus.textContent = "Поддерживаемый формат записи недоступен.";
+      speechStatus.textContent = tr("Поддерживаемый формат записи недоступен.");
       return;
     }
     recordButton.disabled = true;
@@ -1044,12 +1052,12 @@ if (setupForm) {
         releaseMicrophone();
         const clip = new Blob(chunks, { type: mimeType });
         if (!clip.size || clip.size > 3 * 1024 * 1024) {
-          speechStatus.textContent = "Запись пуста или слишком велика.";
+          speechStatus.textContent = tr("Запись пуста или слишком велика.");
           return;
         }
         cancelTranscription.hidden = false;
         discardTranscript = false;
-        speechStatus.textContent = "Распознаю речь на компьютере…";
+        speechStatus.textContent = tr("Распознаю речь на компьютере…");
         try {
           const response = await fetch("/api/transcribe", {
             method: "POST", credentials: "same-origin",
@@ -1059,23 +1067,23 @@ if (setupForm) {
           const result = await responseJson(response);
           if (discardTranscript) return;
           if (!result.text) {
-            speechStatus.textContent = "Речь не обнаружена. Ничего не отправлено.";
+            speechStatus.textContent = tr("Речь не обнаружена. Ничего не отправлено.");
           } else {
             setInput([inputNode.value.trim(), result.text].filter(Boolean).join("\n"));
             inputNode.focus();
-            speechStatus.textContent = "Проверьте распознанный текст и нажмите «Отправить».";
+            speechStatus.textContent = tr("Проверьте распознанный текст и нажмите «Отправить».");
           }
         } catch (error) { speechStatus.textContent = error.message; }
         finally { cancelTranscription.hidden = true; }
       };
       recorder.start();
-      speechStatus.textContent = "Запись — до 19 секунд.";
+      speechStatus.textContent = tr("Запись — до 19 секунд.");
       recordButton.hidden = true;
       stopRecording.hidden = false;
       recordTimer = setTimeout(() => { if (recorder?.state === "recording") recorder.stop(); }, 19000);
     } catch (error) {
       releaseMicrophone();
-      speechStatus.textContent = "Нет доступа к микрофону.";
+      speechStatus.textContent = tr("Нет доступа к микрофону.");
     } finally { recordButton.disabled = false; }
   });
   stopRecording.addEventListener("click", () => {
@@ -1086,7 +1094,7 @@ if (setupForm) {
     cancelTranscription.disabled = true;
     try {
       await api("/api/transcribe/cancel", "POST");
-      speechStatus.textContent = "Распознавание отменено. Ничего не отправлено.";
+      speechStatus.textContent = tr("Распознавание отменено. Ничего не отправлено.");
     } catch (error) { speechStatus.textContent = error.message; }
     finally { cancelTranscription.disabled = false; cancelTranscription.hidden = true; }
   });

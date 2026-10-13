@@ -2,6 +2,14 @@
 
 Date: 11 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
 
+### 0.5.7 English interface
+
+- Settings → Appearance now offers Russian and English interface languages. Save applies the committed language immediately and persists it across restarts; Cancel and failed saves retain the current language. Existing preferences default to Russian without a schema migration or rewriting stored preferences. Model prompts, context/output budgets and inference behavior are unchanged.
+- Translates explicitly marked interface labels, chat actions, confirmations, statistics and ordinary status messages. Conversation titles, messages, drafts and model names remain literal. Dates and counts follow the selected locale. Initial HTML uses the saved language; static translated text/attributes are escaped, and interpolated values are inserted as literal text.
+- The native window updates its controls, save-image dialog and ordinary shutdown/failure notices through two fixed language messages from the existing trusted page. Unexpected message types and objects remain inert. Startup uses a neutral loading indicator before the saved interface is available.
+- Offline qualification: **400 Python tests passed, 3 hardware opt-ins skipped; 58 JavaScript tests passed**. Ruff and mypy passed. The packaged browser check passed **24** theme/tab/viewport combinations plus live switching, reload persistence, cancelled/failed saves, statistics and confirmations, preserving unsent input and original chat text with no JavaScript errors. Native smoke includes a language-switch check and verifies complete child-tree exit. Installer: `dist/Jarvis-0.5.7.msi`.
+- Installed 0.5.7 successfully; all **2,072** packaged files matched. Installed native smoke passed, including the language switch and verified full tree exit. Reopened the ordinary app; a read-only audit confirmed history, preferences and schema unchanged except the documented startup `job_steps.updated_at` timestamps.
+
 ### 0.5.6 vertical and optical new-chat alignment
 
 - Replaced the font-based fullwidth plus and baseline offset with a tightly cropped SVG icon and an explicit text span. Flex alignment centers both items on both axes; the button retains its 49-pixel desktop height. This corrects the downward shift left by the horizontal-only 0.5.5 change. The SVG bounds include its visible stroke, so invisible icon padding does not shift the visible group sideways.

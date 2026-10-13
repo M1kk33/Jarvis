@@ -11,12 +11,14 @@ class Preferences:
     send_shortcut: str = "enter"
     voice_volume: int = 80
     output_tokens: int = 2048
+    language: str = "ru"
 
     def __post_init__(self) -> None:
         for value, allowed in (
             (self.theme, {"dark", "light", "system"}),
             (self.accent, {"mint", "blue", "violet"}),
             (self.send_shortcut, {"enter", "ctrl_enter"}),
+            (self.language, {"ru", "en"}),
         ):
             if type(value) is not str or value not in allowed:
                 raise ValueError("Invalid preference choice")
