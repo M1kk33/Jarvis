@@ -850,3 +850,15 @@ test("Ctrl+Enter preference leaves Enter for newlines and preserves composition 
   key(event({ ctrlKey: true }));
   assert.equal(submitted, 1);
 });
+
+
+test("a context overflow explains how to recover while preserving the failed turn", async () => {
+  const f = fixture({ conversations: [{ id: "saved", title: "Saved" }], history: {
+    messages: [{ id: "user-1", turn_id: "turn-1", role: "user", text: "Read a page" }],
+    turns: [{ id: "turn-1", status: "failed", error_code: "context_limit" }],
+  } });
+  await settle();
+  const strings = (node) => [node.textContent, ...node.children.flatMap(strings)].join(" ");
+  assert.match(strings(f.get("messages").children[0]), /Не хватило места в контексте модели/);
+  assert.match(strings(f.get("messages").children[0]), /уменьшите лимит ответа/);
+});

@@ -394,6 +394,7 @@ if (setupForm) {
 
   function jobLabel(job) {
     if (job.error_code === "output_limit") return tr("Достигнут лимит длины ответа");
+    if (job.error_code === "context_limit") return tr("Не хватило места в контексте модели. Сократите запрос или уменьшите лимит ответа в настройках.");
     return statusLabel(job.status === "running" ? (job.progress || job.status) : job.status);
   }
 
@@ -653,7 +654,7 @@ if (setupForm) {
           details.setAttribute("aria-controls", "activity-panel");
           const node = document.createElement("span");
           node.className = "subtle";
-          node.textContent = tr`Состояние: ${job ? jobLabel(job) : turn.error_code === "output_limit" ? tr("Достигнут лимит длины ответа") : statusLabel(turn.status)}`;
+          node.textContent = tr`Состояние: ${jobLabel(job || turn)}`;
           node.setAttribute("role", "status");
           details.append(node);
           card.append(details);

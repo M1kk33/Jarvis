@@ -22,6 +22,7 @@ NORMALIZED_ERROR_CODES = frozenset(
         "cancelled",
         "backend_crashed",
         "output_limit",
+        "context_limit",
     }
 )
 

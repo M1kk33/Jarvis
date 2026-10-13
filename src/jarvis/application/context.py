@@ -1,9 +1,10 @@
 """Deterministic prompt selection with atomic exchange groups."""
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, replace
 from typing import Protocol
 
-from jarvis.domain.tools import ContextRecord
+from jarvis.domain.tools import ContextRecord, ToolContextRecord
 from jarvis.domain.types import Message, RequestFailure
 
 
@@ -39,6 +40,55 @@ class ContextSelection:
     estimated_tokens: int
     tool_schemas: tuple[str, ...] = ()
     attachments: tuple[str, ...] = ()
+
+
+def shrink_web_evidence(records: list[ContextRecord]) -> list[ContextRecord] | None:
+    """Shorten only page evidence in the current exchange, never durable records.
+
+    Keep the call/result pair, source, timestamp, trust label and screenshot ID.
+    Other tools, user input and instructions are indivisible. A small useful
+    excerpt is required; a prompt that cannot fit even that still fails.
+    """
+    if not records:
+        return None
+    required_turn = records[-1].turn_id
+    candidates = []
+    for index, record in enumerate(records):
+        if (
+            not isinstance(record, ToolContextRecord)
+            or record.turn_id != required_turn
+            or record.role != "tool"
+            or record.name not in {"fetch_public_page", "render_public_page"}
+        ):
+            continue
+        try:
+            result = json.loads(record.content_json)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(result, dict) or result.get("status") != "ok":
+            continue
+        data = result.get("data")
+        if not isinstance(data, dict) or data.get("trust") != "untrusted":
+            continue
+        text = data.get("text")
+        if isinstance(text, str) and len(text) > 256:
+            candidates.append((len(text), index, result))
+    if not candidates:
+        return None
+    _, index, result = max(candidates, key=lambda item: item[0])
+    data = result["data"]
+    data["text"] = data["text"][: max(256, len(data["text"]) // 2)]
+    data["truncated"] = True
+    data["context_truncated"] = True
+    record = records[index]
+    assert isinstance(record, ToolContextRecord)
+    shortened = replace(
+        record,
+        content_json=json.dumps(
+            result, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ),
+    )
+    return records[:index] + [shortened] + records[index + 1 :]
 
 
 class ContextBuilder:
@@ -91,7 +141,7 @@ class ContextBuilder:
         used = fixed + sum(self._cost(item) for item in required)
         if used > self.window:
             raise RequestFailure(
-                "invalid_request", "Required prompt exceeds context budget"
+                "context_limit", "Required prompt exceeds context budget"
             )
         selected = {required_group}
         # Older exchanges are indivisible. Prefer the newest contiguous suffix.
@@ -143,3 +193,24 @@ class ContextBuilder:
             required_group=records[-1].turn_id,
             tool_schemas=tool_schemas,
         )
+
+    def fit_web_evidence(
+        self,
+        records: list[ContextRecord],
+        *,
+        instructions: str,
+        tool_schemas: tuple[str, ...],
+    ) -> list[ContextRecord]:
+        while True:
+            try:
+                self.from_records(
+                    records, instructions=instructions, tool_schemas=tool_schemas
+                )
+                return records
+            except RequestFailure as exc:
+                if exc.code != "context_limit":
+                    raise
+                shortened = shrink_web_evidence(records)
+                if shortened is None:
+                    raise
+                records = shortened

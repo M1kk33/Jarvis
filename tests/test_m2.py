@@ -210,9 +210,9 @@ def test_oversized_current_input_fails_explicitly_after_durable_submission(tmp_p
         )
         with pytest.raises(RequestFailure) as failure:
             app.send(conversation.id, "x" * 30, "oversized")
-        assert failure.value.code == "invalid_request"
+        assert failure.value.code == "context_limit"
         turn = store.get_turns(conversation.id)[0]
-        assert turn.error_code == "invalid_request"
+        assert turn.error_code == "context_limit"
         assert store.get_messages(conversation.id)[0].text == "x" * 30
 
 

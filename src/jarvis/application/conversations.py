@@ -10,7 +10,7 @@ from functools import partial
 from threading import Event
 from uuid import uuid4
 
-from jarvis.application.context import ContextBuilder
+from jarvis.application.context import ContextBuilder, shrink_web_evidence
 from jarvis.application.resource_manager import ResourceManager, _settle
 from jarvis.application.retrieval import RetrievalService
 from jarvis.application.statistics import checkpoint_text_tokens
@@ -450,6 +450,9 @@ class ConversationService:
                     if not page:
                         break
                     records = page + records
+                    records = self.context.fit_web_evidence(
+                        records, instructions=self.instructions, tool_schemas=schema_text
+                    )
                     selection = self.context.from_records(
                         records,
                         instructions=self.instructions,
@@ -458,6 +461,9 @@ class ConversationService:
                     if len(selection.items) < len(records):
                         break
                 records = await self._add_retrieval(records, turn_id, conversation_id)
+                records = self.context.fit_web_evidence(
+                    records, instructions=self.instructions, tool_schemas=schema_text
+                )
                 selection = self.context.from_records(
                     records,
                     instructions=self.instructions,
@@ -568,8 +574,12 @@ class ConversationService:
                 return selected
             oldest = selected[0].turn_id
             if oldest == required_turn:
+                shortened = shrink_web_evidence(selected)
+                if shortened is not None:
+                    selected = shortened
+                    continue
                 raise RequestFailure(
-                    "invalid_request", "Required tool exchange exceeds context budget"
+                    "context_limit", "Required tool exchange exceeds context budget"
                 )
             selected = [record for record in selected if record.turn_id != oldest]
 
@@ -695,7 +705,7 @@ class ConversationService:
             oldest_turn_id = selected[0].turn_id
             if oldest_turn_id == current_turn_id:
                 raise RequestFailure(
-                    "invalid_request", "Required prompt exceeds model context budget"
+                    "context_limit", "Required prompt exceeds model context budget"
                 )
             selected = [m for m in selected if m.turn_id != oldest_turn_id]
 

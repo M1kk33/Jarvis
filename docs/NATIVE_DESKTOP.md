@@ -2,6 +2,14 @@
 
 Date: 11 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
 
+### 0.5.9 fit page evidence into the model context
+
+- Fixed an approved page retrieval completing successfully but failing before the reply because its bounded text exceeded the remaining prompt budget. The current exchange now reduces only a copied page-text excerpt during preflight and, when necessary, the exact tokenizer check. Complete call/result groups, user input, instructions, source URL/time, untrusted labels and screenshot references remain intact. Other tool results are not shortened. Stored receipts/results are never rewritten and no request or approval is replayed.
+- Reduced evidence explicitly carries `truncated` and `context_truncated` flags. If required input and a useful minimum excerpt still cannot fit, the turn remains failed with a distinct `context_limit` code; Russian/English UI explains shortening the request or reducing the configured reply limit. Context size, output allowance and memory reserves are unchanged.
+- Offline qualification: **416 Python tests passed, 3 hardware opt-ins skipped; 61 JavaScript tests passed**. Ruff and mypy passed. Regression tests cover Unicode page text, M13/M14 metadata, exact-tokenizer fallback, immutable durable results, approval continuation, duplicate submissions, oversized required input and restored failure explanations.
+- The packaged backend also passed an isolated **real-model** regression using the already fetched 10,240-byte result from the reported failing page, with no new website requests. With the existing 2,048-token output allowance, exact prompt counts fell from **2,147 to 1,171**, below the 1,792-token input budget. It produced a committed reply using a 2,559-character excerpt. The temporary database retained the original retrieved result and the supervising Job Object verified full tree exit. Installer: `dist/Jarvis-0.5.9.msi`.
+- Installed 0.5.9 successfully; all **2,382** packaged files matched and installed native smoke verified full tree exit. A read-only audit confirmed existing history/preferences/schema unchanged apart from the documented startup `job_steps.updated_at` timestamps.
+
 ### 0.5.8 website access settings
 
 - Settings → Internet offers “Read pages from links” and “Process JavaScript on pages”, in Russian and English. Choices are saved atomically with existing preferences and apply after restart; the current session keeps its original capabilities. Switching reading off clears/disables JavaScript processing. The panel distinguishes saved choices from active access and explains per-URL approval, external-resource limits and the absence of web search.
