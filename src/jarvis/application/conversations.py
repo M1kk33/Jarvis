@@ -530,6 +530,33 @@ class ConversationService:
                         job_attempt,
                     )
                     if proposal is None and text is not None:
+                        if self.page_analysis is not None:
+                            await self._checkpoint_final_draft(
+                                turn_id, text, job_attempt
+                            )
+                            try:
+                                reviewed = (
+                                    await self.page_analysis.ensure_answer_coverage(
+                                        selected, user, text, signal, job_attempt
+                                    )
+                                )
+                            except RequestFailure as exc:
+                                if exc.code in {
+                                    "page_analysis_failed",
+                                    "output_limit",
+                                    "timeout",
+                                    "unavailable",
+                                    "backend_crashed",
+                                }:
+                                    raise PageAnalysisFailure(
+                                        exc.code, "Page answer review did not complete"
+                                    ) from exc
+                                raise
+                            if reviewed != text:
+                                text = reviewed
+                                await self._checkpoint_final_draft(
+                                    turn_id, text, job_attempt
+                                )
                         await checkpoint_text_tokens(
                             self.store,
                             self.provider,
@@ -615,6 +642,30 @@ class ConversationService:
                     "context_limit", "Required tool exchange exceeds context budget"
                 )
             selected = [record for record in selected if record.turn_id != oldest]
+
+    async def _checkpoint_final_draft(
+        self, turn_id: str, text: str, attempt: int | None
+    ) -> None:
+        task = asyncio.create_task(
+            self.store.run(partial(self.store.checkpoint_draft, turn_id, text, attempt))
+        )
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            try:
+                await _settle(task)
+            except asyncio.CancelledError:
+                pass
+            draft = await _settle(
+                asyncio.create_task(
+                    self.store.run(lambda: self.store.get_draft(turn_id))
+                )
+            )
+            if draft is None or draft.text != text:
+                raise StorageFailure(
+                    "Final draft checkpoint outcome was not verified"
+                ) from None
+            raise
 
     async def _consume_tool_stream(
         self,

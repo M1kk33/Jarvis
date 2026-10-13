@@ -1517,7 +1517,14 @@ class SqliteStore:
     def set_page_progress(self, turn_id: str, stage: str, attempt: int | None) -> None:
         self._assert_page_attempt(turn_id, attempt)
         if not stage.startswith(
-            ("page_read:", "page_merge:", "page_planning", "page_answer")
+            (
+                "page_read:",
+                "page_merge:",
+                "page_planning",
+                "page_answer",
+                "page_review",
+                "page_repair",
+            )
         ):
             raise ValueError("Unknown page stage")
         self._conn.execute(

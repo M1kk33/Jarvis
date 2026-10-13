@@ -388,6 +388,7 @@ if (setupForm) {
     if (page) return page[1] === "page_read" ? tr`Чтение страницы: ${page[2]} из ${page[3]}` : tr`Объединение заметок: ${page[2]} из ${page[3]}`;
     return ({ queued: tr("В очереди"), running: tr("Выполняется"), waiting_approval: tr("Ожидает подтверждения"),
       page_planning: tr("Разделяю страницу по лимиту модели"), page_answer: tr("Готовлю ответ по странице"),
+      page_review: tr("Проверяю, все ли темы объяснены"), page_repair: tr("Готовлю объяснение всех тем"),
       page_paused: tr("Чтение приостановлено. Нажмите «Продолжить», чтобы продолжить с сохранённого места."),
       succeeded: tr("Готово"), complete: tr("Завершено"), cancelled: tr("Отменено"), interrupted: tr("Прервано"),
       failed: tr("Ошибка"), pending: tr("Ожидание"), streaming: tr("Формирую ответ"), loading: tr("Загружаю модель"),

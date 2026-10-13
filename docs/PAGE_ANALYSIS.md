@@ -1,7 +1,7 @@
-# Large public pages (0.6.1)
+# Large public pages (0.6.2)
 
 After approval of an exact public URL, ordinary page reading saves one extracted
-text snapshot in SQLite. It retains paragraph, heading and table-row boundaries,
+text snapshot in SQLite. It retains paragraph, heading levels and table-row boundaries,
 visible endnotes outside `<main>` and inline TeX script text. Executable scripts,
 navigation and hidden content are excluded. The saved text is available under
 the existing tool details; opening it makes an authenticated local request and
@@ -15,15 +15,37 @@ Internal calls have no tools and a separate output allowance (at most 512 tokens
 the configured final answer allowance is unchanged. Final fitting includes the
 actual tool schemas, instructions, complete current exchange and final reserve.
 
-Intermediate notes contain only exact source passages selected by the model.
-Unsupported quotes and generated summaries cannot enter subsequent prompts.
-The model selects passage IDs through a constrained JSON schema. The application
-copies their original text itself, validates source substrings, and retains each
-quote's source-range labels through merging; generated prose is never a note.
-Hierarchical merges can select only previously verified passages. Selection and
-merging can omit useful details: processing all ranges does not guarantee an
-exhaustive or correct final answer. The UI reports coverage separately from
-model prose and explicitly describes the notes as compressed evidence.
+Each source range is split into up to four contiguous regions. A constrained
+response must include a subject, factual summary and supporting passage ID for
+EVERY region, preserving beginning, middle and end without requiring headings.
+This works for continuous prose, lists and tables. Source headings and subtopics
+are retained separately when available; fenced code comments are not headings.
+Without an outline, the region subjects form the coverage inventory. The chunk
+planner always advances the covered end and does not repeatedly read tiny tails.
+
+Notes now contain generated summaries as well as exact evidence. The application
+copies evidence from source IDs, verifies substrings and retains quote provenance
+through merges. A merge receives ALL input summaries and retains the complete
+subject inventory independently of which supporting quotes are selected. It may
+not substitute invented quotations. Generated summaries can still be inaccurate
+or omit details; reading every range is not a guarantee of semantic completeness.
+
+Before committing a final answer based on analyzed notes, a bounded model call
+checks whether the user requested a whole-page explanation and which subjects
+or subtopics were missed. A focused question does not force a whole-page rewrite.
+For every whole-page request, one constrained final pass requires a section
+for every subject and a separate explanation for every listed subtopic, even if
+the model's self-review claims nothing is missing. Missing
+fields, invalid output or exhausted limits preserve the draft and checkpoints
+instead of acknowledging a complete answer. This semantic check can itself make
+mistakes; it improves coverage without promising error-free explanations.
+The answer allowance remains unchanged. Both review and rewrite use the active
+model's exact tokenizer, context limit and reserves. If needed, the rewrite omits
+supporting quotes from its prompt, retaining every summary and subject; the
+original evidence remains saved in SQLite. Unfittable input fails explicitly.
+The rewrite also returns to the saved snapshot for short exact definition anchors
+under known subject/subtopic titles; it does not rely solely on merged summaries
+or download the page again.
 
 Snapshots and plans are immutable by identity. Model/runtime hash, context,
 tokenizer/runtime configuration identity, question, instruction/schema/prompt
@@ -36,7 +58,9 @@ exchanges use the saved final notes when selected as history.
 The current bounds are 256 KiB transferred bytes, 512 KiB decompressed HTML,
 256 KiB extracted UTF-8 text, 10 seconds for download, 256 source ranges, four
 merge levels, 8 KiB per saved note/digest and twelve internal generations per
-execution segment. Work also pauses at a checkpoint after 240 seconds (a current
+source-analysis execution segment. Final coverage checking adds at most two
+bounded generations within the existing overall job deadline. Work also pauses
+at a checkpoint after 240 seconds (a current
 call may take longer, within its existing timeout). The user selects Continue to
 start the next segment. Model-stage failures preserve checkpoints and require
 explicit continuation; Cancel remains terminal. Ordinary crash retries retain
@@ -44,8 +68,9 @@ their three-attempt allowance; planned pauses do not consume that allowance.
 Unfittable required input and source-size/plan limits fail explicitly.
 
 Tool details show processed/total ranges and exact input/output token counts for
-successfully saved notes. Failed/discarded model calls are not included in those
-counts. The existing message statistics still count visible user/assistant text.
+successfully saved notes. Failed/discarded calls and final review/rewrite calls
+are not included in those saved-note counts. The existing message statistics
+still count visible user/assistant text, including a committed rewritten answer.
 SQLite backups include snapshots, notes and progress automatically. Deleting a
 chat removes them atomically through foreign keys. Migrations 014 and 015 preserve
 existing rows; the job-table rebuild checks all relationships before commit and

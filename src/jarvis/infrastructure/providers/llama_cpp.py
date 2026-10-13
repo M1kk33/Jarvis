@@ -468,6 +468,7 @@ class LlamaChatProvider:
         instructions: str,
         output_tokens: int,
         choices: tuple[str, ...] = (),
+        response_schema: dict[str, object] | None = None,
     ) -> Iterator[StreamEvent]:
         if (
             type(output_tokens) is not int
@@ -481,6 +482,7 @@ class LlamaChatProvider:
             None,
             output_tokens=output_tokens,
             selection_ids=choices,
+            response_schema=response_schema,
         )
 
     @staticmethod
@@ -551,6 +553,7 @@ class LlamaChatProvider:
         vision: tuple[str, bytes] | None = None,
         output_tokens: int | None = None,
         selection_ids: tuple[str, ...] = (),
+        response_schema: dict[str, object] | None = None,
     ) -> Iterator[StreamEvent]:
         endpoint = self.runtime.endpoint
         deadline = time.monotonic() + self.request_seconds
@@ -597,6 +600,15 @@ class LlamaChatProvider:
                     },
                 },
             }
+            if response_schema is not None:
+                payload["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "page_notes",
+                        "strict": True,
+                        "schema": response_schema,
+                    },
+                }
         if tools is not None:
             payload["tools"] = tools
             payload["parallel_tool_calls"] = False

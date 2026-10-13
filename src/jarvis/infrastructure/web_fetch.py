@@ -132,7 +132,11 @@ class _Article(HTMLParser):
             self.stack.append((tag, hidden, main))
         if not hidden:
             prefix = (
-                "\n\n"
+                "\n\n```\n\n"
+                if tag == "pre"
+                else "\n\n" + "#" * int(tag[1]) + " "
+                if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}
+                else "\n\n"
                 if tag
                 in {
                     "p",
@@ -158,6 +162,8 @@ class _Article(HTMLParser):
                 self.main.append(prefix)
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "pre" and self.stack and not self.stack[-1][1]:
+            self.parts.append("\n\n```\n\n")
         if tag in {
             "p",
             "div",

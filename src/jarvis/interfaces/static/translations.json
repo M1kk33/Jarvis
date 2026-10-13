@@ -1,4 +1,6 @@
 {
+  "Проверяю, все ли темы объяснены": "Checking subject coverage",
+  "Готовлю объяснение всех тем": "Preparing an explanation of all subjects",
   "Разбор страницы прерван: модель не завершила текущую часть. Нажмите «Продолжить», чтобы повторить её; готовые заметки сохранены.": "Page analysis stopped: the model did not complete the current chunk. Select Continue to retry it; completed notes are saved.",
   "Чтение страницы: {0} из {1}": "Reading page: {0} of {1}",
   "Объединение заметок: {0} из {1}": "Merging notes: {0} of {1}",

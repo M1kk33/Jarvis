@@ -876,6 +876,12 @@ test("page progress pauses without a reconnect loop and keeps explicit resume", 
   await f.get("send-form").requestSubmit();
   assert.match(f.get("messages").textContent, /Чтение страницы: 4 из 12/);
   const stream = f.sources.at(-1);
+  f.setJobs([{ ...job, progress: "page_review" }]);
+  await stream.handlers.progress({ data: JSON.stringify({ job: { ...job, progress: "page_review" } }) });
+  assert.match(f.get("messages").textContent, /Проверяю, все ли темы объяснены/);
+  f.setJobs([{ ...job, progress: "page_repair" }]);
+  await stream.handlers.progress({ data: JSON.stringify({ job: { ...job, progress: "page_repair" } }) });
+  assert.match(f.get("messages").textContent, /Готовлю объяснение всех тем/);
   const paused = { ...job, status: "interrupted", progress: "page_paused", error_code: "page_paused" };
   f.setJobs([paused]);
   f.get("message-input").value = "Unsent draft";

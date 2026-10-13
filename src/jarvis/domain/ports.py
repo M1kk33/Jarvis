@@ -210,6 +210,7 @@ class PageAnalysisProvider(Protocol):
         instructions: str,
         output_tokens: int,
         choices: tuple[str, ...] = (),
+        response_schema: dict[str, object] | None = None,
     ) -> Iterator[StreamEvent]: ...
     def count_output_tokens(self, text: str) -> int: ...
 

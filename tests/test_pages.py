@@ -87,21 +87,42 @@ class PageModel:
     def count_output_tokens(self, text):
         return len(text) // self.ratio + 1
 
-    def stream_bounded(self, messages, cancel, instructions, output_tokens, choices=()):
+    def stream_bounded(
+        self,
+        messages,
+        cancel,
+        instructions,
+        output_tokens,
+        choices=(),
+        response_schema=None,
+    ):
         payload = json.loads(messages[0].text)
+        if payload.get("task") == "review":
+            yield StreamDelta(json.dumps({"overview": False, "missing": []}))
+            yield StreamTerminal()
+            return
         self.calls.append(
             (payload, self.count_prompt_tokens(messages, instructions), output_tokens)
         )
         units = payload["DATA"]
-        selected = next(
-            (unit["id"] for unit in units if "TAIL_FACT" in unit["text"]),
-            units[0]["id"],
-        )
-        assert selected in choices
-        if self.bad:
-            selected = "UNKNOWN_SOURCE"
+        result = {}
+        for region in payload["units"]:
+            candidates = [unit for unit in units if unit["id"] in region["passages"]]
+            chosen = next(
+                (unit for unit in candidates if "TAIL_FACT" in unit["text"]),
+                candidates[0],
+            )
+            selected = chosen["id"]
+            assert selected in choices
+            if self.bad:
+                selected = "UNKNOWN_SOURCE"
+            result[region["id"]] = {
+                "topic": "Source facts",
+                "summary": chosen["text"][:120],
+                "selected": [selected],
+            }
         try:
-            yield StreamDelta(json.dumps({"selected": [selected]}))
+            yield StreamDelta(json.dumps({"units": result}))
             yield StreamTerminal()
         finally:
             self.closed += 1
@@ -542,9 +563,13 @@ def test_cancel_during_second_chunk_settles_stream_and_keeps_first_checkpoint(tm
             entered = Event()
             original = model.stream_bounded
 
-            def blocking(messages, cancel, instructions, output, choices=()):
+            def blocking(
+                messages, cancel, instructions, output, choices=(), response_schema=None
+            ):
                 if not model.calls:
-                    yield from original(messages, cancel, instructions, output, choices)
+                    yield from original(
+                        messages, cancel, instructions, output, choices, response_schema
+                    )
                 else:
                     entered.set()
                     try:
