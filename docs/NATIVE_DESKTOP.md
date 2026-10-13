@@ -2,12 +2,12 @@
 
 Date: 11 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
 
-### 0.5.3 conversation layout
+### 0.5.4 conversation layout
 
 - User messages are compact rounded bubbles aligned to the right of the centered conversation column. Short questions fit their text; long inputs wrap within 80% of the column (90% in narrow windows). Assistant replies, streaming drafts, Markdown and reply actions remain aligned on the left. Repeated sender headings are visually hidden but retained for screen readers. The saved accent controls bubble tint in both themes.
 - Uploaded screenshots keep a useful preview width even with short captions; generated images remain in assistant replies. The change is CSS only, with no inference, storage or conversation-state changes.
-- Offline checks: **389 Python tests passed, 3 hardware opt-ins skipped; 56 JavaScript tests passed**. Ruff and mypy passed. Packaged browser qualification passed **24** combinations of dark/light themes, mint/blue/violet accents and 520/850/1280/1920-pixel widths, checking right alignment, column width, long unbroken input, code/table overflow, draft Markdown, image sizing and retained sender labels, with no JavaScript errors. Installer: `dist/Jarvis-0.5.3.msi`.
-- Installed 0.5.3 successfully; all **2,069** packaged files matched. Installed native smoke passed with verified full tree exit. The ordinary application was reopened, and a read-only before/after audit confirmed existing history, preferences and schema unchanged, excluding the already documented `job_steps.updated_at` startup timestamps.
+- Offline checks: **389 Python tests passed, 3 hardware opt-ins skipped; 56 JavaScript tests passed**. Ruff and mypy passed. Packaged browser qualification covers **24** combinations of dark/light themes, mint/blue/violet accents and 520/850/1280/1920-pixel widths, checking right alignment, column width, long unbroken input, code/table overflow, draft Markdown, image sizing and retained sender labels. Hidden sender labels are positioned relative to their own message, preventing them from extending the outer page and producing a second scrollbar. Installer: `dist/Jarvis-0.5.4.msi`.
+- All 24 browser cases passed, including the outer page height/width bounds, with no JavaScript errors. Installed 0.5.4 successfully; all **2,069** packaged files matched and the installed native smoke verified full tree exit. The ordinary application was reopened. A read-only before/after audit confirmed existing history, preferences and schema unchanged, excluding the already documented `job_steps.updated_at` startup timestamps.
 
 ### 0.5.2 automatic sign-in without a form flash
 

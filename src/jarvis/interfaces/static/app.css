@@ -99,7 +99,7 @@ h3 { margin: 2rem 0 1rem; }
 .suggestions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 28px; }
 .suggestions button { color: #c2c9ce; background: #191d23; border-color: var(--line); font-size: 12px; font-weight: 400; }
 .suggestions button:hover { border-color: var(--accent-border); background: var(--accent-soft); }
-.message { max-width: 780px; margin: 0 0 32px; padding: 0; line-height: 1.75; font-size: var(--chat-text-size, 14px); }
+.message { position: relative; max-width: 780px; margin: 0 0 32px; padding: 0; line-height: 1.75; font-size: var(--chat-text-size, 14px); }
 .message.assistant { width: 100%; }
 .reply-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; margin-top: 10px; }
 .reply-actions .reply-action { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; min-width: 30px; padding: 6px; border: 0; border-radius: 7px; color: var(--muted); }
