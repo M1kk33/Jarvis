@@ -2,6 +2,12 @@
 
 Date: 11 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
 
+### 0.5.6 vertical and optical new-chat alignment
+
+- Replaced the font-based fullwidth plus and baseline offset with a tightly cropped SVG icon and an explicit text span. Flex alignment centers both items on both axes; the button retains its 49-pixel desktop height. This corrects the downward shift left by the horizontal-only 0.5.5 change. The SVG bounds include its visible stroke, so invisible icon padding does not shift the visible group sideways.
+- Packaged measurements passed 24 combinations of themes, accents and sidebar/viewport widths, checking the icon and label's vertical centers as well as the group's horizontal center. The maximum layout offset was under 0.01 pixel. Button crops were visually inspected in dark/light themes. **389 Python tests passed, 3 hardware opt-ins skipped; 56 JavaScript tests passed**. Installer: `dist/Jarvis-0.5.6-final.msi`.
+- Installed 0.5.6 successfully; all **2,069** packaged files matched, and installed native smoke verified full tree exit. Reopened the ordinary app and verified the existing history/preferences/schema remained unchanged except known startup `job_steps.updated_at` timestamps.
+
 ### 0.5.5 centered new-chat button
 
 - Centered the existing plus icon and “Новый диалог” text as a single inline group, preserving the button's size, spacing and action. Packaged browser measurements passed 18 combinations of two themes, three accents and 150/226/420-pixel sidebar widths; the maximum horizontal center offset was under 0.01 pixel. Offline checks: **389 Python tests passed, 3 hardware opt-ins skipped; 56 JavaScript tests passed**. Installer: `dist/Jarvis-0.5.5.msi`.
