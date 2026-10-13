@@ -40,7 +40,7 @@ h3 { margin: 2rem 0 1rem; }
 .layout.sidebar-resizing, .layout.sidebar-resizing * { cursor: col-resize !important; user-select: none !important; }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 650; letter-spacing: -.7px; margin: 0 8px 30px; }
 .brand-mark { display: inline-grid; place-items: center; background: var(--accent); color: var(--accent-ink); width: 31px; height: 34px; border-radius: 10px 10px 10px 3px; font-size: 23px; font-weight: 650; }
-.new-chat { width: 100%; text-align: left; background: var(--accent-soft); color: var(--accent); border-color: var(--accent-border); }
+.new-chat { width: 100%; text-align: center; background: var(--accent-soft); color: var(--accent); border-color: var(--accent-border); }
 .new-chat:hover { background: var(--accent-soft-hover); }
 .new-chat span { margin-right: 8px; font-size: 20px; vertical-align: -1px; }
 .sidebar h2 { padding-left: 10px; }

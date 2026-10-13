@@ -2,6 +2,11 @@
 
 Date: 11 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
 
+### 0.5.5 centered new-chat button
+
+- Centered the existing plus icon and “Новый диалог” text as a single inline group, preserving the button's size, spacing and action. Packaged browser measurements passed 18 combinations of two themes, three accents and 150/226/420-pixel sidebar widths; the maximum horizontal center offset was under 0.01 pixel. Offline checks: **389 Python tests passed, 3 hardware opt-ins skipped; 56 JavaScript tests passed**. Installer: `dist/Jarvis-0.5.5.msi`.
+- Installed 0.5.5 successfully; all **2,069** packaged files matched and installed native smoke passed with verified tree exit. Reopened the ordinary app; a read-only before/after audit confirmed existing history/preferences/schema unchanged apart from known startup `job_steps.updated_at` timestamps.
+
 ### 0.5.4 conversation layout
 
 - User messages are compact rounded bubbles aligned to the right of the centered conversation column. Short questions fit their text; long inputs wrap within 80% of the column (90% in narrow windows). Assistant replies, streaming drafts, Markdown and reply actions remain aligned on the left. Repeated sender headings are visually hidden but retained for screen readers. The saved accent controls bubble tint in both themes.
