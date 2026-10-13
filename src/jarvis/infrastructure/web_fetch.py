@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from html.parser import HTMLParser
 from urllib.parse import SplitResult, urlsplit
 
+from jarvis.domain.pages import MAX_PAGE_TEXT_BYTES
 from jarvis.domain.types import RequestFailure
 
 _COMPRESSED_LIMIT = 256 * 1024
@@ -101,6 +102,101 @@ class _Text(HTMLParser):
             self.parts.append(data)
 
 
+class _Article(HTMLParser):
+    """Keep author-defined main/article content and structural text boundaries."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.stack: list[tuple[str, bool, bool]] = []
+        self.parts: list[str] = []
+        self.main: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        math_script = tag == "script" and str(attributes.get("type", "")).split(";")[
+            0
+        ].strip().lower() in {"math/tex", "application/x-tex"}
+        hidden = (
+            (self.stack[-1][1] if self.stack else False)
+            or (
+                tag in {"script", "style", "head", "noscript", "svg", "template", "nav"}
+                and not math_script
+            )
+            or "hidden" in dict(attrs)
+        )
+        main = (self.stack[-1][2] if self.stack else False) or tag in {
+            "main",
+            "article",
+        }
+        if tag not in {"br", "hr", "img", "input", "meta", "link", "source", "wbr"}:
+            self.stack.append((tag, hidden, main))
+        if not hidden:
+            prefix = (
+                "\n\n"
+                if tag
+                in {
+                    "p",
+                    "div",
+                    "section",
+                    "h1",
+                    "h2",
+                    "h3",
+                    "h4",
+                    "h5",
+                    "h6",
+                    "tr",
+                    "br",
+                }
+                else "\t"
+                if tag in {"td", "th"}
+                else "\n- "
+                if tag == "li"
+                else ""
+            )
+            self.parts.append(prefix)
+            if main:
+                self.main.append(prefix)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {
+            "p",
+            "div",
+            "section",
+            "pre",
+            "li",
+            "tr",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+        }:
+            self.parts.append("\n\n")
+            if self.stack and self.stack[-1][2]:
+                self.main.append("\n\n")
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index][0] == tag:
+                del self.stack[index:]
+                break
+
+    def handle_data(self, data: str) -> None:
+        hidden = self.stack[-1][1] if self.stack else False
+        main = self.stack[-1][2] if self.stack else False
+        if not hidden:
+            self.parts.append(data)
+            if main:
+                self.main.append(data)
+
+    def text(self) -> str:
+        # Retain visible notes/appendices outside <main>, too. Selecting only
+        # <article> silently loses substantive source material on many sites.
+        source = "".join(self.parts)
+        return "\n\n".join(
+            " ".join(part.split()) for part in source.split("\n\n") if part.strip()
+        )
+
+
 class _PinnedConnection:
     """Mixin that connects to the vetted numeric address, retaining host for TLS."""
 
@@ -137,9 +233,12 @@ class _HTTPS(_PinnedConnection, http.client.HTTPSConnection):
 
 
 class PublicPageFetcher:
-    def __init__(self, resolver=None, connection_factory=None) -> None:
+    def __init__(
+        self, resolver=None, connection_factory=None, *, full_text: bool = False
+    ) -> None:
         self.resolver = resolver or socket.getaddrinfo
         self.connection_factory = connection_factory
+        self.full_text = full_text
 
     def inspect(self, name: str, arguments: dict[str, object]) -> str:
         if name != "fetch_public_page" or type(arguments.get("url")) is not str:
@@ -281,7 +380,10 @@ class PublicPageFetcher:
                 raise RequestFailure("invalid_request", "Unsupported content encoding")
             declared = response.getheader("Content-Length")
             if declared and declared.isdecimal() and int(declared) > _COMPRESSED_LIMIT:
-                raise RequestFailure("invalid_request", "Page exceeds byte limit")
+                raise RequestFailure(
+                    "page_too_large" if self.full_text else "invalid_request",
+                    "Page exceeds byte limit",
+                )
             decompressor = (
                 zlib.decompressobj(16 + zlib.MAX_WBITS) if encoding == "gzip" else None
             )
@@ -299,7 +401,10 @@ class PublicPageFetcher:
                     break
                 compressed += len(chunk)
                 if compressed > _COMPRESSED_LIMIT:
-                    raise RequestFailure("invalid_request", "Page exceeds byte limit")
+                    raise RequestFailure(
+                        "page_too_large" if self.full_text else "invalid_request",
+                        "Page exceeds byte limit",
+                    )
                 data = (
                     decompressor.decompress(chunk, _DECODED_LIMIT - decoded + 1)
                     if decompressor
@@ -310,7 +415,8 @@ class PublicPageFetcher:
                     decompressor and decompressor.unconsumed_tail
                 ):
                     raise RequestFailure(
-                        "invalid_request", "Decompressed page exceeds byte limit"
+                        "page_too_large" if self.full_text else "invalid_request",
+                        "Decompressed page exceeds byte limit",
                     )
                 chunks.append(data)
             if decompressor and not decompressor.eof:
@@ -346,13 +452,24 @@ class PublicPageFetcher:
         raw, content_type, status = self.download_cancellable(url, cancel)
         text = raw.decode("utf-8", errors="replace")
         if content_type == "text/html":
-            parser = _Text()
-            parser.feed(text)
-            text = " ".join("".join(parser.parts).split())
+            if self.full_text:
+                article = _Article()
+                article.feed(text)
+                text = article.text()
+            else:
+                parser = _Text()
+                parser.feed(text)
+                text = " ".join("".join(parser.parts).split())
         encoded = text.encode("utf-8")
+        if self.full_text and len(encoded) > MAX_PAGE_TEXT_BYTES:
+            raise RequestFailure(
+                "page_too_large", "Extracted page exceeds snapshot limit"
+            )
         truncated = len(encoded) > _TEXT_LIMIT
-        if truncated:
+        if truncated and not self.full_text:
             text = encoded[:_TEXT_LIMIT].decode("utf-8", errors="ignore")
+        if self.full_text:
+            truncated = False
         return {
             "url": url,
             "status": status,

@@ -23,6 +23,9 @@ NORMALIZED_ERROR_CODES = frozenset(
         "backend_crashed",
         "output_limit",
         "context_limit",
+        "page_paused",
+        "page_too_large",
+        "page_analysis_failed",
     }
 )
 

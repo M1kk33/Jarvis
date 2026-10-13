@@ -2,6 +2,16 @@
 
 Date: 11 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
 
+### 0.6.1 checkpointed large-page reading
+
+- Approved ordinary page reads retain one complete bounded SQLite text snapshot. The same model processes overlapping chunks using its actual tokenizer and configured context/output reserves, then selects verified source passages into bounded hierarchical notes. Small pages use a direct answer. Intermediate calls are sequential and tool-free; final reply length is unchanged.
+- Russian/English progress, explicit Continue after a work-budget pause or model-stage failure, on-demand saved text, coverage and saved-note token counts live in the existing request/tool details. Cancellation stays terminal. Notes and snapshots survive restart, participate in backups and disappear with their chat.
+- Limits and accuracy tradeoffs are documented in [PAGE_ANALYSIS.md](PAGE_ANALYSIS.md). No new model, tool, recursive browsing or automatic retrieval index was added. The optional JavaScript renderer keeps its previous limits. Migrations 014/015 preserve existing rows and verify foreign-key relationships around the transactional job-table rebuild.
+- Non-compressing evidence fails explicitly as a context limit instead of offering a continuation that cannot progress. When output settings change a paused plan, tool details show coverage for its latest plan.
+- Qualification: **435 Python tests passed, 3 hardware opt-ins skipped; 70 JavaScript tests passed**; Ruff/mypy passed. Tests cover exact budgets across tokenizer/window/output configurations, full tail coverage, merging, process-loss continuation, more than three execution segments, cancellation during streaming/commit, stale attempts, migration rollback, backup/restore, chat deletion and authenticated literal source viewing.
+- The packaged backend passed an isolated real Qwen3-4B test on a **35,476-byte / 19,202-character** source with a sentinel at the end: **6/6 chunks**, one fixture fetch, no website requests, about **11 seconds**, correct final sentinel and unchanged **2,048-token** final allowance. Actual internal generation prompts peaked at **3,307 tokens**, within the 3,328-token input allowance; planning probes are counted separately. Native smoke verified microphone policy, English/Russian switching and full child-tree exit. Existing history, preferences and tool receipts were verified unchanged after migrations 014/015.
+- Final installer: `dist/Jarvis-0.6.1.msi`. Installation succeeded, all **2,389** packaged files matched, and the ordinary app reopened its existing history. A consistent database backup and read-only comparison were taken before migration; no real conversation or settings were reset.
+
 ### 0.5.10 mathematical formulas
 
 - Assistant replies and drafts now render inline/display TeX with a pinned local KaTeX 0.19.0 bundle and native MathML. A dedicated Markdown lexer recognizes math before escaping, including formulas in lists/tables. Code spans/fences, currency/escaped dollars and user messages remain literal; invalid/incomplete/unsupported expressions retain their source. Stored/copied/spoken text is unchanged. Native mathematical alphabets preserve ℝ, ℱ and Greek bold variants using Unicode equivalents.

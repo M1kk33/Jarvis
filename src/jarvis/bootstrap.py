@@ -17,6 +17,7 @@ from jarvis.application.conversations import ConversationService
 from jarvis.application.file_creation import FileCreateService
 from jarvis.application.images import ImageService
 from jarvis.application.jobs import JobRunner
+from jarvis.application.pages import PageAnalysisService
 from jarvis.application.resource_manager import (
     CpuWorkerGate,
     ResourceManager,
@@ -29,7 +30,7 @@ from jarvis.application.spoken import SpokenPlaybackService
 from jarvis.application.statistics import StatisticsService
 from jarvis.application.tools import ToolPolicy, ToolService
 from jarvis.application.vision import VisionService
-from jarvis.domain.ports import ChatProvider
+from jarvis.domain.ports import ChatProvider, PageAnalysisProvider, ToolChatProvider
 from jarvis.domain.resource_ports import ManagedRuntime
 from jarvis.domain.resources import ResourceError
 from jarvis.domain.types import ConversationError
@@ -60,6 +61,7 @@ from jarvis.interfaces.cli import dispatch, parse_args
 
 if TYPE_CHECKING:
     from jarvis.interfaces.web_control import WebControl
+
 
 def main(
     argv: list[str] | None = None,
@@ -324,7 +326,9 @@ def main(
                             manager,
                             image_profile.admission_profile(),
                         )
-                    web_backend = PublicPageFetcher() if network_enabled else None
+                    web_backend = (
+                        PublicPageFetcher(full_text=True) if network_enabled else None
+                    )
                     browser_service = None
                     if browser_enabled:
                         assert (
@@ -362,6 +366,7 @@ def main(
                         file_service=file_service,
                         web_backend=web_backend,
                         browser_service=browser_service,
+                        save_pages=network_enabled,
                     )
                 if args.command == "reconcile-file":
                     assert tool_service is not None
@@ -370,23 +375,6 @@ def main(
                     )
                     print("reconciled" if result is not None else "unresolved")
                     return 0
-                service = ConversationService(
-                    store,
-                    provider,
-                    context=(
-                        ContextBuilder(
-                            PreflightTokenEstimator(),
-                            output_allowance=preferences.output_tokens,
-                        )
-                        if manager
-                        else None
-                    ),
-                    diagnostics=diagnostics,
-                    resource_manager=manager,
-                    runtime_profile=(profile.admission_profile() if profile else None),
-                    tool_service=tool_service,
-                    retrieval=retrieval,
-                )
                 profile_identity = (
                     ":".join(
                         (
@@ -399,6 +387,35 @@ def main(
                     )
                     if profile is not None
                     else "fake"
+                )
+                context = (
+                    ContextBuilder(
+                        PreflightTokenEstimator(),
+                        window=runtime.context_tokens,
+                        output_allowance=preferences.output_tokens,
+                    )
+                    if manager
+                    else ContextBuilder()
+                )
+                page_analysis = (
+                    PageAnalysisService(
+                        store, provider, provider, context, profile_identity
+                    )
+                    if network_enabled
+                    and isinstance(provider, PageAnalysisProvider)
+                    and isinstance(provider, ToolChatProvider)
+                    else None
+                )
+                service = ConversationService(
+                    store,
+                    provider,
+                    context=context,
+                    diagnostics=diagnostics,
+                    resource_manager=manager,
+                    runtime_profile=(profile.admission_profile() if profile else None),
+                    tool_service=tool_service,
+                    retrieval=retrieval,
+                    page_analysis=page_analysis,
                 )
                 vision_service = None
                 if vision_profile is not None:

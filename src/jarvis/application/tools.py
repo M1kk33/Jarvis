@@ -15,6 +15,7 @@ from jarvis.application.browser import BrowserService
 from jarvis.application.file_creation import FileCreateService
 from jarvis.application.images import ImageService
 from jarvis.application.resource_manager import _settle
+from jarvis.domain.pages import MAX_PAGE_TEXT_BYTES
 from jarvis.domain.ports import CancellableToolBackend, ToolStore
 from jarvis.domain.resources import AdmissionDenied
 from jarvis.domain.tools import InvocationStatus, ToolInvocation, tool_argument_limit
@@ -413,6 +414,7 @@ class ToolService:
         file_service: FileCreateService | None = None,
         web_backend: ToolBackend | None = None,
         browser_service: BrowserService | None = None,
+        save_pages: bool = False,
     ) -> None:
         self.store = store
         self.backend = backend
@@ -423,6 +425,7 @@ class ToolService:
         self.file_service = file_service
         self.web_backend = web_backend
         self.browser_service = browser_service
+        self.save_pages = save_pages
 
     async def _inspect(self, name: str, arguments: dict[str, object]) -> str:
         if name == "create_text_file":
@@ -811,9 +814,50 @@ class ToolService:
             if result_status == "error":
                 output = {"code": "invalid_tool_output"}
 
+        page_text = None
+        metadata_json = None
+        if (
+            self.save_pages
+            and spec.name == "fetch_public_page"
+            and result_status == "ok"
+        ):
+            source = output.get("text")
+            if (
+                not isinstance(source, str)
+                or len(source.encode("utf-8")) > MAX_PAGE_TEXT_BYTES
+            ):
+                result_status = "error"
+                output = {"code": "page_too_large"}
+            else:
+                page_text = source
+                metadata_json = _canonical(
+                    {key: value for key, value in output.items() if key != "text"}
+                )
+                output = {
+                    **output,
+                    "text": source.encode("utf-8")[:4096].decode(
+                        "utf-8", errors="ignore"
+                    ),
+                    "snapshot_id": invocation_id,
+                }
+                output["truncated"] = (
+                    bool(output["truncated"]) or output["text"] != source
+                )
         result_json = _canonical({"status": result_status, "data": output})
+        while (
+            page_text is not None
+            and len(result_json.encode("utf-8")) > spec.max_output_bytes
+            and isinstance(output.get("text"), str)
+            and output["text"]
+        ):
+            preview = output["text"]
+            assert isinstance(preview, str)
+            output["text"] = preview[: len(preview) // 2]
+            output["truncated"] = True
+            result_json = _canonical({"status": result_status, "data": output})
         if len(result_json.encode("utf-8")) > spec.max_output_bytes:
             result_json = _canonical({"status": "error", "code": "output_too_large"})
+            page_text = metadata_json = None
         receipt_json = _canonical(
             {
                 "status": "complete",
@@ -821,13 +865,21 @@ class ToolService:
             }
         )
         try:
-            commit = asyncio.create_task(
-                self.store.run(
-                    lambda: self.store.commit_tool_result(
-                        invocation_id, receipt_json, result_json
+
+            def commit_result() -> ToolInvocation:
+                if page_text is not None and metadata_json is not None:
+                    return self.store.commit_page_result(
+                        invocation_id,
+                        receipt_json,
+                        result_json,
+                        page_text,
+                        metadata_json,
                     )
+                return self.store.commit_tool_result(
+                    invocation_id, receipt_json, result_json
                 )
-            )
+
+            commit = asyncio.create_task(self.store.run(commit_result))
             try:
                 result = await asyncio.shield(commit)
             except asyncio.CancelledError:

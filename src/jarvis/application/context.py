@@ -70,6 +70,8 @@ def shrink_web_evidence(records: list[ContextRecord]) -> list[ContextRecord] | N
         data = result.get("data")
         if not isinstance(data, dict) or data.get("trust") != "untrusted":
             continue
+        if data.get("representation") in {"analyzed_notes", "full_text"}:
+            continue
         text = data.get("text")
         if isinstance(text, str) and len(text) > 256:
             candidates.append((len(text), index, result))

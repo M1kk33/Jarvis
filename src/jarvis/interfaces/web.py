@@ -478,6 +478,14 @@ def create_web_app(
             artifacts,
             invocations,
         ) = await service.store.run(snapshot)
+        page_service = service.page_analysis
+        pages = (
+            await page_service.store.run(
+                lambda: page_service.store.page_analysis_metadata(conversation_id)
+            )
+            if page_service is not None
+            else []
+        )
         return {
             "conversation": asdict(record),
             "turns": [asdict(turn) for turn in turns],
@@ -485,6 +493,24 @@ def create_web_app(
             "drafts": [asdict(draft) for draft in drafts],
             "artifacts": artifacts,
             "invocations": [asdict(item) for item in invocations],
+            "pages": pages,
+        }
+
+    @app.get("/api/pages/{invocation_id}")
+    async def page_snapshot(request: Request, invocation_id: str):
+        authorize(request)
+        pages = service.page_analysis
+        if pages is None:
+            raise HTTPException(404)
+        saved = await pages.store.run(
+            lambda: pages.store.get_page_snapshot(invocation_id)
+        )
+        if saved is None:
+            raise HTTPException(404)
+        return {
+            "text": saved.text,
+            "sha256": saved.sha256,
+            "source": json.loads(saved.metadata_json),
         }
 
     @app.delete("/api/conversations/{conversation_id}")
@@ -604,7 +630,7 @@ def create_web_app(
                 job = snapshot["job"]
                 if isinstance(job, dict) and job.get("status") in {
                     item.value for item in TERMINAL_JOBS
-                }:
+                } | {"interrupted"}:
                     break
                 await asyncio.sleep(0.25)
 

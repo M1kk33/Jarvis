@@ -11,10 +11,12 @@ from threading import Event
 from uuid import uuid4
 
 from jarvis.application.context import ContextBuilder, shrink_web_evidence
+from jarvis.application.pages import PageAnalysisService
 from jarvis.application.resource_manager import ResourceManager, _settle
 from jarvis.application.retrieval import RetrievalService
 from jarvis.application.statistics import checkpoint_text_tokens
 from jarvis.application.tools import ToolService
+from jarvis.domain.pages import PageAnalysisFailure, PageAnalysisPaused
 from jarvis.domain.ports import (
     ChatProvider,
     ConversationStore,
@@ -75,6 +77,7 @@ class ConversationService:
         runtime_profile: RuntimeProfile | None = None,
         tool_service: ToolService | None = None,
         retrieval: RetrievalService | None = None,
+        page_analysis: PageAnalysisService | None = None,
     ) -> None:
         self.store = store
         self.provider = provider
@@ -97,6 +100,7 @@ class ConversationService:
             raise ValueError("Tool-enabled chat requires a tool-capable provider")
         self.tool_service = tool_service
         self.retrieval = retrieval
+        self.page_analysis = page_analysis
 
     async def _add_retrieval(
         self, records: Sequence[ContextRecord], turn_id: str, conversation_id: str
@@ -451,7 +455,9 @@ class ConversationService:
                         break
                     records = page + records
                     records = self.context.fit_web_evidence(
-                        records, instructions=self.instructions, tool_schemas=schema_text
+                        records,
+                        instructions=self.instructions,
+                        tool_schemas=schema_text,
                     )
                     selection = self.context.from_records(
                         records,
@@ -475,6 +481,31 @@ class ConversationService:
                     assert self.runtime_profile is not None
                     handle = await self.resource_manager.acquire(self.runtime_profile)
                 try:
+                    if self.page_analysis is not None:
+                        user = await self.store.run(
+                            lambda: self.store.get_user_message(turn_id)
+                        )
+                        try:
+                            selected = await self.page_analysis.prepare(
+                                selected,
+                                user,
+                                schemas,
+                                self.instructions,
+                                signal,
+                                job_attempt,
+                            )
+                        except RequestFailure as exc:
+                            if exc.code in {
+                                "page_analysis_failed",
+                                "output_limit",
+                                "timeout",
+                                "unavailable",
+                                "backend_crashed",
+                            }:
+                                raise PageAnalysisFailure(
+                                    exc.code, "Page stage did not complete"
+                                ) from exc
+                            raise
                     selected = await self._fit_exact_tool_context(selected, schemas)
                     if not input_counted:
                         user = await self.store.run(
@@ -508,6 +539,8 @@ class ConversationService:
                             signal,
                             job_attempt,
                         )
+                except PageAnalysisPaused:
+                    raise
                 except BaseException:
                     signal.set()
                     if handle is not None:

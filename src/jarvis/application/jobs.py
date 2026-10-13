@@ -15,6 +15,7 @@ from jarvis.application.vision import (
     validate_screenshot,
 )
 from jarvis.domain.jobs import TERMINAL_JOBS, Job, JobStatus, same_profile_identity
+from jarvis.domain.pages import PageAnalysisFailure, PageAnalysisPaused
 from jarvis.domain.ports import JobStore
 from jarvis.domain.resources import ResourceUnavailable
 from jarvis.domain.types import (
@@ -442,6 +443,15 @@ class JobRunner:
         except asyncio.CancelledError:
             signal.set()
             return await _settle(asyncio.create_task(self._settle_cancellation(job_id)))
+        except (PageAnalysisPaused, PageAnalysisFailure) as page_error:
+            pause_code = page_error.code
+            latest = await self.store.run(lambda: self.store.get_job(job_id))
+            if latest.cancel_requested:
+                return await self._settle_cancellation(job_id)
+            await self.store.run(
+                lambda: self.store.pause_page_job(job.turn_id, job.attempt, pause_code)
+            )
+            return await self.store.run(lambda: self.store.get_job(job_id))
         except Exception as exc:
             settled = await self.store.run(lambda: self.store.get_job(job_id))
             if settled.status in TERMINAL_JOBS:

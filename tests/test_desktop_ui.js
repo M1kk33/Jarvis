@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.join(__dirname, "../src/jarvis/interfaces/st
 const markdownSource = fs.readFileSync(path.join(__dirname, "../src/jarvis/interfaces/static/markdown.js"), "utf8");
 const marked = require("../src/jarvis/interfaces/static/marked.umd.js");
 
-function fixture({ vision = false, spoken = false, clipboard, regenerate, decode, history, loadHistory, sendShortcut = "enter", conversations: initialConversations = [] } = {}) {
+function fixture({ vision = false, spoken = false, clipboard, regenerate, decode, history, loadHistory, pageText = "<script>source is literal</script>", sendShortcut = "enter", conversations: initialConversations = [] } = {}) {
   class Element {
     constructor() { this.children = []; this.handlers = {}; this.hidden = true; this.value = ""; this.files = []; this.textContent = ""; this.style = { setProperty(name, value) { this[name] = value; } }; this.scrollHeight = 36; this.clientWidth = 1280; this.classes = new Set(); this.classList = { add: name => this.classes.add(name), remove: name => this.classes.delete(name) }; this.captured = new Set(); }
     get textContent() { return this._text + this.children.map(child => child.textContent).join(""); }
@@ -104,6 +104,7 @@ function fixture({ vision = false, spoken = false, clipboard, regenerate, decode
         }
       }
       else if (url === "/api/jobs") value = { jobs };
+      else if (url.startsWith("/api/pages/")) value = { text: pageText };
       else if (options.method === "DELETE") {
         if (failDelete) { value = { detail: "Delete request failed" }; ok = false; }
         else { conversations = conversations.filter(c => !url.endsWith(`/${c.id}`)); value = { deleted: true }; }
@@ -861,4 +862,50 @@ test("a context overflow explains how to recover while preserving the failed tur
   const strings = (node) => [node.textContent, ...node.children.flatMap(strings)].join(" ");
   assert.match(strings(f.get("messages").children[0]), /Не хватило места в контексте модели/);
   assert.match(strings(f.get("messages").children[0]), /уменьшите лимит ответа/);
+});
+
+test("page progress pauses without a reconnect loop and keeps explicit resume", async () => {
+  const f = fixture({ history: {
+    messages: [{ id: "message-1", turn_id: "turn-1", role: "user", text: "Page" }],
+    turns: [{ id: "turn-1", status: "pending" }],
+  } });
+  await settle();
+  const job = { id: "job-1", conversation_id: "conversation-1", turn_id: "turn-1", status: "running", progress: "page_read:4:12" };
+  f.setJobs([job]);
+  f.get("message-input").value = "Page";
+  await f.get("send-form").requestSubmit();
+  assert.match(f.get("messages").textContent, /Чтение страницы: 4 из 12/);
+  const stream = f.sources.at(-1);
+  const paused = { ...job, status: "interrupted", progress: "page_paused", error_code: "page_paused" };
+  f.setJobs([paused]);
+  f.get("message-input").value = "Unsent draft";
+  await stream.handlers.progress({ data: JSON.stringify({ job: paused }) });
+  assert.equal(stream.closed, true);
+  assert.equal(f.sources.length, 1);
+  assert.match(f.get("jobs").textContent, /Продолжить/);
+  assert.match(f.get("messages").textContent, /сохранённого места/);
+  assert.equal(f.get("message-input").value, "Unsent draft");
+});
+
+test("page coverage is honest and saved text loads only on demand as literal text", async () => {
+  const f = fixture({ conversations: [{ id: "saved", title: "Page" }], history: {
+    messages: [{ id: "user", turn_id: "turn", role: "user", text: "Read" }],
+    turns: [{ id: "turn", status: "interrupted" }],
+    invocations: [{ id: "inv", turn_id: "turn", name: "fetch_public_page", status: "complete", result_json: JSON.stringify({ status: "ok", data: { snapshot_id: "inv" } }) }],
+    pages: [{ invocation_id: "inv", processed: 4, total: 12, status: "reading", input_tokens: 1000, output_tokens: 40 }],
+  } });
+  await settle();
+  const card = f.get("messages").children[0];
+  assert.match(card.textContent, /Обработано частей: 4 из 12/);
+  assert.match(card.textContent, /ещё не завершён/);
+  assert.doesNotMatch(card.textContent, /Все части прочитаны/);
+  assert.equal(f.requests.some(r => r.url.startsWith("/api/pages/")), false);
+  const details = card.children.find(node => node.tagName === "details");
+  const saved = details.children.find(node => node.tagName === "details");
+  saved.open = true;
+  await saved.handlers.toggle();
+  await saved.handlers.toggle();
+  assert.equal(f.requests.filter(r => r.url.startsWith("/api/pages/")).length, 1);
+  assert.equal(saved.children.at(-1).tagName, "pre");
+  assert.equal(saved.children.at(-1).textContent, "<script>source is literal</script>");
 });

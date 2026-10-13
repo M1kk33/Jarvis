@@ -102,6 +102,10 @@ def _bounded_lines(response: httpx.Response) -> Iterator[str]:
 
 
 class LlamaServerRuntime:
+    # This is the configured runtime window, not the model's advertised maximum.
+    # Admission profiles are calibrated for this value.
+    context_tokens = 4096
+
     def __init__(
         self, profile: LocalTextProfile | LocalVisionProfile, run_root: Path
     ) -> None:
@@ -151,7 +155,7 @@ class LlamaServerRuntime:
             "--port",
             str(port),
             "--ctx-size",
-            "4096",
+            str(self.context_tokens),
             "--parallel",
             "1",
             "--batch-size",
@@ -457,6 +461,28 @@ class LlamaChatProvider:
     ) -> Iterator[StreamEvent]:
         return self._stream(messages, cancel, instructions, None)
 
+    def stream_bounded(
+        self,
+        messages: Sequence[Message],
+        cancel: Event,
+        instructions: str,
+        output_tokens: int,
+        choices: tuple[str, ...] = (),
+    ) -> Iterator[StreamEvent]:
+        if (
+            type(output_tokens) is not int
+            or not 1 <= output_tokens <= self.max_output_tokens
+        ):
+            raise ValueError("Invalid analysis output allowance")
+        return self._stream(
+            messages,
+            cancel,
+            instructions,
+            None,
+            output_tokens=output_tokens,
+            selection_ids=choices,
+        )
+
     @staticmethod
     def _vision_messages(
         question: str, image: bytes, instructions: str
@@ -523,6 +549,8 @@ class LlamaChatProvider:
         instructions: str,
         tools: list[dict[str, object]] | None,
         vision: tuple[str, bytes] | None = None,
+        output_tokens: int | None = None,
+        selection_ids: tuple[str, ...] = (),
     ) -> Iterator[StreamEvent]:
         endpoint = self.runtime.endpoint
         deadline = time.monotonic() + self.request_seconds
@@ -533,12 +561,42 @@ class LlamaChatProvider:
                 if vision is not None
                 else _messages(messages, instructions)
             ),
-            "max_tokens": self.max_output_tokens,
+            "max_tokens": self.max_output_tokens
+            if output_tokens is None
+            else output_tokens,
             "stream": True,
             "parse_tool_calls": tools is not None,
         }
         if vision is not None:
             payload["temperature"] = 0
+        if output_tokens is not None:
+            payload["temperature"] = 0
+            field = "selected" if selection_ids else "evidence"
+            item_schema: dict[str, object] = (
+                {"type": "string", "enum": list(selection_ids)}
+                if selection_ids
+                else {"type": "string", "minLength": 1, "maxLength": 600}
+            )
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "page_evidence",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            field: {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 3,
+                                "items": item_schema,
+                            }
+                        },
+                        "required": [field],
+                        "additionalProperties": False,
+                    },
+                },
+            }
         if tools is not None:
             payload["tools"] = tools
             payload["parallel_tool_calls"] = False

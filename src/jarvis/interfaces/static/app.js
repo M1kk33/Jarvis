@@ -384,7 +384,11 @@ if (setupForm) {
   }
 
   function statusLabel(value) {
+    const page = /^(page_read|page_merge):(\d+):(\d+)$/.exec(value || "");
+    if (page) return page[1] === "page_read" ? tr`Чтение страницы: ${page[2]} из ${page[3]}` : tr`Объединение заметок: ${page[2]} из ${page[3]}`;
     return ({ queued: tr("В очереди"), running: tr("Выполняется"), waiting_approval: tr("Ожидает подтверждения"),
+      page_planning: tr("Разделяю страницу по лимиту модели"), page_answer: tr("Готовлю ответ по странице"),
+      page_paused: tr("Чтение приостановлено. Нажмите «Продолжить», чтобы продолжить с сохранённого места."),
       succeeded: tr("Готово"), complete: tr("Завершено"), cancelled: tr("Отменено"), interrupted: tr("Прервано"),
       failed: tr("Ошибка"), pending: tr("Ожидание"), streaming: tr("Формирую ответ"), loading: tr("Загружаю модель"),
       image_loading: tr("Подготавливаю модель изображений"), image_generating: tr("Генерирую изображение"),
@@ -393,6 +397,10 @@ if (setupForm) {
   }
 
   function jobLabel(job) {
+    if (job.progress === "page_paused" && job.error_code && job.error_code !== "page_paused") return tr("Разбор страницы прерван: модель не завершила текущую часть. Нажмите «Продолжить», чтобы повторить её; готовые заметки сохранены.");
+    if (job.error_code === "page_paused" || job.progress === "page_paused") return statusLabel("page_paused");
+    if (job.error_code === "page_too_large") return tr("Страница превышает допустимый размер или требует слишком много частей.");
+    if (job.error_code === "page_analysis_failed") return tr("Не удалось получить корректные заметки по странице. Сохранённые данные не потеряны.");
     if (job.error_code === "output_limit") return tr("Достигнут лимит длины ответа");
     if (job.error_code === "context_limit") return tr("Не хватило места в контексте модели. Сократите запрос или уменьшите лимит ответа в настройках.");
     return statusLabel(job.status === "running" ? (job.progress || job.status) : job.status);
@@ -625,6 +633,7 @@ if (setupForm) {
           let toolResult;
           try { toolResult = JSON.parse(item.result_json || "null"); } catch (_) { /* Keep raw diagnostic details below. */ }
           const toolFailed = toolResult?.status === "error";
+          if (toolFailed && (toolResult.code || toolResult.data?.code) === "page_too_large") line(card, tr("Страница превышает допустимый размер или требует слишком много частей."), "notice");
           if (toolFailed && toolResult.code === "out_of_memory") {
             const memory = toolResult.memory;
             let explanation = tr("Генерация не запущена: недостаточно свободной памяти с учётом защитного резерва. Закройте тяжёлые приложения и отправьте новый запрос.");
@@ -643,6 +652,29 @@ if (setupForm) {
           const receipt = document.createElement("pre");
           receipt.textContent = tr`Назначение: ${item.target_identity}\nArguments: ${item.arguments_json}\nReceipt: ${item.receipt_json || "none"}\nResult: ${item.result_json || "none"}`;
           details.append(receipt);
+          if (toolResult?.data?.snapshot_id) {
+            const saved = document.createElement("details");
+            const heading = document.createElement("summary");
+            heading.textContent = tr("Сохранённый текст страницы");
+            saved.append(heading);
+            let loaded = false;
+            saved.addEventListener("toggle", async () => {
+              if (!saved.open || loaded) return;
+              loaded = true;
+              try {
+                const snapshot = await api(`/api/pages/${encodeURIComponent(item.id)}`);
+                const text = document.createElement("pre");
+                text.textContent = snapshot.text;
+                saved.append(text);
+              } catch (error) { loaded = false; say(error.message); }
+            });
+            details.append(saved);
+          }
+          for (const page of (data.pages || []).filter((page) => page.invocation_id === item.id).slice(-1)) {
+            line(details, tr`Обработано частей: ${page.processed} из ${page.total}`, "subtle");
+            line(details, page.status === "complete" ? tr("Все части прочитаны. Ответ составлен по сжатым заметкам; отдельные детали могли не попасть в него.") : tr("Анализ страницы ещё не завершён."), "subtle");
+            line(details, tr`Токены сохранённых заметок: вход ${page.input_tokens}, выход ${page.output_tokens ?? "—"}`, "subtle");
+          }
           card.append(details);
         }
         const turn = turns.get(message.turn_id);
@@ -829,7 +861,7 @@ if (setupForm) {
           if (follow) messagesNode.scrollTop = messagesNode.scrollHeight;
         }
       }
-      if (["succeeded", "failed", "cancelled"].includes(snapshot.job.status)) {
+      if (["succeeded", "failed", "cancelled", "interrupted"].includes(snapshot.job.status)) {
         source.close();
         if (state.source === source) state.source = null;
         await refreshConversation();

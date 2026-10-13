@@ -25,6 +25,13 @@ from jarvis.domain.jobs import (
     JobStep,
     same_profile_identity,
 )
+from jarvis.domain.pages import (
+    MAX_PAGE_NOTES_BYTES,
+    MAX_PAGE_TEXT_BYTES,
+    PageAnalysis,
+    PageNote,
+    PageSnapshot,
+)
 from jarvis.domain.preferences import Preferences
 from jarvis.domain.retrieval import Document, Memory, RetrievalHit, RetrievalRoot
 from jarvis.domain.statistics import ChatStatistics
@@ -36,6 +43,7 @@ from jarvis.domain.tools import (
     ToolInvocation,
 )
 from jarvis.domain.types import (
+    NORMALIZED_ERROR_CODES,
     ActiveTurnError,
     Conversation,
     ConversationNotFound,
@@ -254,6 +262,8 @@ class SqliteStore:
             (11, "011_reply_versions.sql"),
             (12, "012_text_token_counts.sql"),
             (13, "013_conversation_deletion.sql"),
+            (14, "014_page_analysis.sql"),
+            (15, "015_page_resumes.sql"),
         ):
             script = (
                 resources.files("jarvis")
@@ -270,16 +280,28 @@ class SqliteStore:
                         f"Migration {version:03d} changed after it was applied"
                     )
                 continue
+            rebuild = version == 15
+            if rebuild:
+                self._conn.execute("PRAGMA foreign_keys=OFF")
             try:
                 self._conn.executescript("BEGIN IMMEDIATE;\n" + script)
                 self._conn.execute(
                     "INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)",
                     (version, checksum, _now()),
                 )
+                if (
+                    rebuild
+                    and self._conn.execute("PRAGMA foreign_key_check").fetchone()
+                    is not None
+                ):
+                    raise StorageFailure("Page migration left invalid relationships")
                 self._conn.commit()
             except BaseException:
                 self._conn.rollback()
                 raise
+            finally:
+                if rebuild:
+                    self._conn.execute("PRAGMA foreign_keys=ON")
 
     @_on_owner
     def checkpoint_text_tokens(
@@ -1219,35 +1241,352 @@ class SqliteStore:
         result_json: str,
     ) -> ToolInvocation:
         with self._transaction():
-            changed = self._conn.execute(
-                "UPDATE tool_invocations SET status='complete', receipt_json=?, "
-                "result_json=?, completed_at=? WHERE id=? AND status='intent'",
-                (receipt_json, result_json, _now(), invocation_id),
-            )
-            if changed.rowcount != 1:
-                raise StaleTurnError("Tool invocation is not executing")
-            row = self._conn.execute(
-                "SELECT job_id, ordinal FROM tool_invocations WHERE id=?",
-                (invocation_id,),
-            ).fetchone()
-            if row["job_id"] is not None:
-                self._conn.execute(
-                    "UPDATE image_steps SET status='complete', updated_at=? "
-                    "WHERE invocation_id=? AND status='running'",
-                    (_now(), invocation_id),
-                )
-                self._conn.execute(
-                    "UPDATE job_steps SET status='complete', updated_at=? "
-                    "WHERE invocation_id=? AND status='running'",
-                    (_now(), invocation_id),
-                )
-                self._conn.execute(
-                    "UPDATE jobs SET next_step=?, progress='tool_complete', "
-                    "updated_at=? WHERE id=? AND status='running' "
-                    "AND cancel_requested=0",
-                    (row["ordinal"] + 1, _now(), row["job_id"]),
-                )
+            self._commit_tool_result(invocation_id, receipt_json, result_json)
         return self.get_invocation(invocation_id)
+
+    def _commit_tool_result(
+        self,
+        invocation_id: str,
+        receipt_json: str,
+        result_json: str,
+    ) -> None:
+        changed = self._conn.execute(
+            "UPDATE tool_invocations SET status='complete', receipt_json=?, "
+            "result_json=?, completed_at=? WHERE id=? AND status='intent'",
+            (receipt_json, result_json, _now(), invocation_id),
+        )
+        if changed.rowcount != 1:
+            raise StaleTurnError("Tool invocation is not executing")
+        row = self._conn.execute(
+            "SELECT job_id, ordinal FROM tool_invocations WHERE id=?",
+            (invocation_id,),
+        ).fetchone()
+        if row["job_id"] is not None:
+            self._conn.execute(
+                "UPDATE image_steps SET status='complete', updated_at=? "
+                "WHERE invocation_id=? AND status='running'",
+                (_now(), invocation_id),
+            )
+            self._conn.execute(
+                "UPDATE job_steps SET status='complete', updated_at=? "
+                "WHERE invocation_id=? AND status='running'",
+                (_now(), invocation_id),
+            )
+            self._conn.execute(
+                "UPDATE jobs SET next_step=?, progress='tool_complete', "
+                "updated_at=? WHERE id=? AND status='running' "
+                "AND cancel_requested=0",
+                (row["ordinal"] + 1, _now(), row["job_id"]),
+            )
+
+    @_on_owner
+    def commit_page_result(
+        self,
+        invocation_id: str,
+        receipt_json: str,
+        result_json: str,
+        page_text: str,
+        metadata_json: str,
+    ) -> ToolInvocation:
+        if len(page_text.encode("utf-8")) > MAX_PAGE_TEXT_BYTES:
+            raise ValueError("Page snapshot exceeds byte limit")
+        digest = hashlib.sha256(page_text.encode("utf-8")).hexdigest()
+        with self._transaction():
+            invocation = self.get_invocation(invocation_id)
+            metadata = json.loads(metadata_json)
+            if (
+                invocation.name != "fetch_public_page"
+                or metadata.get("url")
+                != json.loads(invocation.arguments_json).get("url")
+                or metadata.get("trust") != "untrusted"
+            ):
+                raise StaleTurnError("Page snapshot differs from approved request")
+            self._conn.execute(
+                "INSERT INTO page_snapshots VALUES(?,?,?,?)",
+                (invocation_id, page_text, digest, metadata_json),
+            )
+            self._commit_tool_result(invocation_id, receipt_json, result_json)
+        return self.get_invocation(invocation_id)
+
+    @_on_owner
+    def get_page_snapshot(self, invocation_id: str) -> PageSnapshot | None:
+        row = self._conn.execute(
+            "SELECT * FROM page_snapshots WHERE invocation_id=?", (invocation_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        if hashlib.sha256(row["text"].encode("utf-8")).hexdigest() != row["sha256"]:
+            raise StorageFailure("Page snapshot verification failed")
+        return PageSnapshot(
+            row["invocation_id"], row["text"], row["sha256"], row["metadata_json"]
+        )
+
+    def _assert_page_attempt(self, turn_id: str, attempt: int | None) -> None:
+        turn = self.get_turn(turn_id)
+        job = self.get_job_by_turn(turn_id)
+        if (
+            turn.status is not TurnStatus.PENDING
+            or (
+                job is not None
+                and (
+                    job.status is not JobStatus.RUNNING
+                    or job.cancel_requested
+                    or job.attempt != attempt
+                )
+            )
+            or (job is None and attempt is not None)
+        ):
+            raise StaleTurnError("Page checkpoint belongs to an inactive attempt")
+
+    @_on_owner
+    def get_page_analysis(self, analysis_id: str) -> PageAnalysis | None:
+        row = self._conn.execute(
+            "SELECT * FROM page_analyses WHERE id=?", (analysis_id,)
+        ).fetchone()
+        return PageAnalysis(**dict(row)) if row else None
+
+    @_on_owner
+    def latest_page_analysis(self, invocation_id: str) -> PageAnalysis | None:
+        row = self._conn.execute(
+            "SELECT * FROM page_analyses WHERE invocation_id=? AND status='complete' ORDER BY rowid DESC LIMIT 1",
+            (invocation_id,),
+        ).fetchone()
+        return (
+            PageAnalysis(
+                row["id"],
+                row["invocation_id"],
+                row["turn_id"],
+                row["signature"],
+                row["plan_json"],
+                row["status"],
+                row["result"],
+            )
+            if row is not None
+            else None
+        )
+
+    @_on_owner
+    def create_page_analysis(
+        self, analysis: PageAnalysis, attempt: int | None
+    ) -> PageAnalysis:
+        with self._transaction():
+            self._assert_page_attempt(analysis.turn_id, attempt)
+            original = self.get_page_analysis(analysis.id)
+            if original is not None:
+                if (
+                    original.invocation_id,
+                    original.turn_id,
+                    original.signature,
+                    original.plan_json,
+                ) != (
+                    analysis.invocation_id,
+                    analysis.turn_id,
+                    analysis.signature,
+                    analysis.plan_json,
+                ):
+                    raise StaleTurnError("Page analysis identity was reused")
+                return original
+            snapshot = self.get_page_snapshot(analysis.invocation_id)
+            invocation = self.get_invocation(analysis.invocation_id)
+            if (
+                snapshot is None
+                or invocation.status is not InvocationStatus.COMPLETE
+                or invocation.turn_id != analysis.turn_id
+            ):
+                raise StaleTurnError("Page analysis requires a committed snapshot")
+            plan = json.loads(analysis.plan_json)
+            if not 1 <= len(plan["chunks"]) <= 256:
+                raise ValueError("Page plan exceeds chunk limit")
+            ranges = plan["chunks"]
+            previous_start, previous_end = -1, 0
+            for bounds in ranges:
+                if not isinstance(bounds, list) or len(bounds) != 2:
+                    raise ValueError("Invalid page range")
+                start, end = bounds
+                if (
+                    type(start) is not int
+                    or type(end) is not int
+                    or not previous_start < start <= previous_end
+                    or not start < end <= len(snapshot.text)
+                ):
+                    raise ValueError("Page plan has missing or invalid ranges")
+                previous_start, previous_end = start, end
+            if ranges[0][0] != 0 or previous_end != len(snapshot.text):
+                raise ValueError("Page plan does not cover the source")
+            self._conn.execute(
+                "INSERT INTO page_analyses VALUES(?,?,?,?,?,?,?)",
+                (
+                    analysis.id,
+                    analysis.invocation_id,
+                    analysis.turn_id,
+                    analysis.signature,
+                    analysis.plan_json,
+                    analysis.status,
+                    analysis.result,
+                ),
+            )
+        return analysis
+
+    @_on_owner
+    def get_page_notes(self, analysis_id: str, stage: str) -> list[PageNote]:
+        rows = self._conn.execute(
+            "SELECT stage,ordinal,text,input_tokens,output_tokens FROM page_notes WHERE analysis_id=? AND stage=? ORDER BY ordinal",
+            (analysis_id, stage),
+        ).fetchall()
+        return [PageNote(**dict(row)) for row in rows]
+
+    @_on_owner
+    def commit_page_note(
+        self, analysis_id: str, note: PageNote, attempt: int | None
+    ) -> None:
+        if (
+            not note.text.strip()
+            or len(note.text.encode("utf-8")) > MAX_PAGE_NOTES_BYTES
+            or note.input_tokens < 0
+            or (note.output_tokens is not None and note.output_tokens < 0)
+        ):
+            raise ValueError("Invalid page note")
+        with self._transaction():
+            analysis = self.get_page_analysis(analysis_id)
+            if analysis is None or analysis.status == "complete":
+                raise StaleTurnError("Page analysis is not active")
+            self._assert_page_attempt(analysis.turn_id, attempt)
+            if note.stage not in {
+                "read",
+                "merge:1",
+                "merge:2",
+                "merge:3",
+                "merge:4",
+            } or not 0 <= note.ordinal < len(json.loads(analysis.plan_json)["chunks"]):
+                raise ValueError("Page note exceeds plan bounds")
+            previous = self._conn.execute(
+                "SELECT text,input_tokens,output_tokens FROM page_notes WHERE analysis_id=? AND stage=? AND ordinal=?",
+                (analysis_id, note.stage, note.ordinal),
+            ).fetchone()
+            if previous:
+                if tuple(previous) != (
+                    note.text,
+                    note.input_tokens,
+                    note.output_tokens,
+                ):
+                    raise StaleTurnError("Page note identity was reused")
+                return
+            self._conn.execute(
+                "INSERT INTO page_notes VALUES(?,?,?,?,?,?)",
+                (
+                    analysis_id,
+                    note.stage,
+                    note.ordinal,
+                    note.text,
+                    note.input_tokens,
+                    note.output_tokens,
+                ),
+            )
+            if note.stage.startswith("merge"):
+                self._conn.execute(
+                    "UPDATE page_analyses SET status='merging' WHERE id=?",
+                    (analysis_id,),
+                )
+
+    @_on_owner
+    def finish_page_analysis(
+        self, analysis_id: str, result: str, attempt: int | None
+    ) -> None:
+        if not result.strip() or len(result.encode("utf-8")) > MAX_PAGE_NOTES_BYTES:
+            raise ValueError("Invalid page digest")
+        with self._transaction():
+            analysis = self.get_page_analysis(analysis_id)
+            if analysis is None:
+                raise StaleTurnError("Page analysis is missing")
+            self._assert_page_attempt(analysis.turn_id, attempt)
+            total = len(json.loads(analysis.plan_json)["chunks"])
+            read = self._conn.execute(
+                "SELECT count(*) FROM page_notes WHERE analysis_id=? AND stage='read'",
+                (analysis_id,),
+            ).fetchone()[0]
+            if read != total:
+                raise StaleTurnError("Cannot finish a partially read page")
+            if analysis.status == "complete" and analysis.result != result:
+                raise StaleTurnError("Page digest differs from committed result")
+            self._conn.execute(
+                "UPDATE page_analyses SET status='complete',result=? WHERE id=?",
+                (result, analysis_id),
+            )
+
+    @_on_owner
+    def set_page_progress(self, turn_id: str, stage: str, attempt: int | None) -> None:
+        self._assert_page_attempt(turn_id, attempt)
+        if not stage.startswith(
+            ("page_read:", "page_merge:", "page_planning", "page_answer")
+        ):
+            raise ValueError("Unknown page stage")
+        self._conn.execute(
+            "UPDATE jobs SET progress=?,updated_at=? WHERE turn_id=?",
+            (stage, _now(), turn_id),
+        )
+
+    @_on_owner
+    def pause_page_job(
+        self, turn_id: str, attempt: int | None, code: str = "page_paused"
+    ) -> None:
+        if code not in NORMALIZED_ERROR_CODES:
+            raise ValueError("Unknown page pause reason")
+        with self._transaction():
+            self._assert_page_attempt(turn_id, attempt)
+            self._conn.execute(
+                "INSERT INTO page_pauses VALUES(?,1) ON CONFLICT(turn_id) DO UPDATE SET segments=segments+1",
+                (turn_id,),
+            )
+            self._conn.execute(
+                "UPDATE turns SET status='interrupted',error_code=? WHERE id=?",
+                (code, turn_id),
+            )
+            self._conn.execute(
+                "UPDATE turn_drafts SET status='interrupted' WHERE turn_id=?",
+                (turn_id,),
+            )
+            self._conn.execute(
+                "UPDATE jobs SET status='interrupted',progress='page_paused',error_code=?,updated_at=? WHERE turn_id=?",
+                (code, _now(), turn_id),
+            )
+            self._conn.execute(
+                "UPDATE job_steps SET status='interrupted',updated_at=? WHERE job_id IN (SELECT id FROM jobs WHERE turn_id=?) AND kind='chat' AND status='running'",
+                (_now(), turn_id),
+            )
+
+    @_on_owner
+    def page_analysis_metadata(self, conversation_id: str) -> list[dict[str, object]]:
+        result = []
+        for row in self._conn.execute(
+            "SELECT a.*,p.metadata_json,p.sha256,length(CAST(p.text AS BLOB)) AS bytes FROM page_analyses a JOIN page_snapshots p ON p.invocation_id=a.invocation_id JOIN turns t ON t.id=a.turn_id WHERE t.conversation_id=? ORDER BY a.rowid",
+            (conversation_id,),
+        ).fetchall():
+            counts = self._conn.execute(
+                "SELECT count(*) AS n,coalesce(sum(input_tokens),0) AS tokens_in,sum(output_tokens) AS tokens_out FROM page_notes WHERE analysis_id=?",
+                (row["id"],),
+            ).fetchone()
+            processed = self._conn.execute(
+                "SELECT count(*) FROM page_notes WHERE analysis_id=? AND stage='read'",
+                (row["id"],),
+            ).fetchone()[0]
+            meta = json.loads(row["metadata_json"])
+            result.append(
+                {
+                    "id": row["id"],
+                    "invocation_id": row["invocation_id"],
+                    "turn_id": row["turn_id"],
+                    "url": meta["url"],
+                    "source_truncated": meta.get("truncated", False),
+                    "bytes": row["bytes"],
+                    "sha256": row["sha256"],
+                    "status": row["status"],
+                    "processed": processed,
+                    "total": len(json.loads(row["plan_json"])["chunks"]),
+                    "input_tokens": counts["tokens_in"],
+                    "output_tokens": counts["tokens_out"],
+                }
+            )
+        return result
 
     @_on_owner
     def reconcile_tool_result(
@@ -1602,7 +1941,10 @@ class SqliteStore:
             ).fetchone()
             if unknown is not None:
                 raise StaleTurnError("Unknown tool outcome blocks job resume")
-            if row["attempt"] >= 3:
+            pause = self._conn.execute(
+                "SELECT segments FROM page_pauses WHERE turn_id=?", (row["turn_id"],)
+            ).fetchone()
+            if row["attempt"] >= 3 + (pause[0] if pause is not None else 0):
                 self._conn.execute(
                     "UPDATE turns SET status='failed', error_code='timeout' "
                     "WHERE id=? AND status IN ('pending', 'interrupted')",
@@ -1659,7 +2001,7 @@ class SqliteStore:
             if changed.rowcount != 1:
                 raise StaleTurnError("Job turn cannot resume")
             self._conn.execute(
-                "UPDATE jobs SET status='running', attempt=attempt+1, "
+                "UPDATE jobs SET status='running', attempt=attempt+1, error_code=NULL, "
                 "deadline_at=?, progress='generating', updated_at=? WHERE id=?",
                 (
                     (
