@@ -3,6 +3,8 @@
 // Marked supplies tokens only. Model text never enters an HTML parsing sink.
 window.JarvisMarkdown = (() => {
   const previous = new WeakMap();
+  const pending = new WeakMap();
+  let mathBudget;
   const entities = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0" };
   function decode(text) {
     return text.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, (raw, name) => {
@@ -21,6 +23,7 @@ window.JarvisMarkdown = (() => {
     if (depth > 32) throw new Error("Markdown nesting limit");
     for (const token of tokens || []) {
       switch (token.type) {
+        case "math": window.JarvisMath.append(parent, token, mathBudget); break;
         case "strong": case "em": case "del":
           inline(element(parent, token.type), token.tokens, depth + 1); break;
         case "codespan":
@@ -51,6 +54,7 @@ window.JarvisMarkdown = (() => {
     if (depth > 32) throw new Error("Markdown nesting limit");
     for (const token of tokens) {
       switch (token.type) {
+        case "math": window.JarvisMath.append(parent, token, mathBudget); break;
         case "space": break;
         case "checkbox": text(parent, token.checked ? "☑ " : "☐ "); break;
         case "heading": inline(element(parent, `h${token.depth}`), token.tokens, depth + 1); break;
@@ -94,11 +98,21 @@ window.JarvisMarkdown = (() => {
       }
     }
   }
-  function render(container, source) {
+  function render(container, source, { streaming = false } = {}) {
+    const queued = pending.get(container);
+    if (streaming && window.setTimeout && /\\[([]|\$/.test(source)) {
+      if (queued) { queued.source = source; return; }
+      const update = { source };
+      update.timer = window.setTimeout(() => { pending.delete(container); render(container, update.source); }, 120);
+      pending.set(container, update);
+      return;
+    }
+    if (queued) { window.clearTimeout(queued.timer); pending.delete(container); }
     if (previous.get(container) === source) return;
+    mathBudget = { count: 0, characters: 0 };
     const fragment = document.createDocumentFragment();
     try {
-      blocks(fragment, window.marked.lexer(source, { gfm: true }));
+      blocks(fragment, window.JarvisMath ? window.JarvisMath.lexer.lexer(source) : window.marked.lexer(source, { gfm: true }));
       container.replaceChildren(fragment);
     } catch (_) {
       // Interrupted syntax, excessive nesting or parser failures retain the text.

@@ -4,6 +4,10 @@
 /* Message and artifact cards share the saved accent; assistant replies stay unboxed. */
 :root { --message-surface: #17191e; --message-background: color-mix(in srgb, var(--accent) 18%, var(--message-surface)); --message-border: color-mix(in srgb, var(--accent) 12%, var(--line)); }
 * { box-sizing: border-box; }
+.math-inline { font-size: 1.08em; }
+.math-display { display: block; max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: .65em .15em; margin: .6em 0; text-align: center; }
+.math-display math { margin-inline: auto; }
+.markdown math { color: inherit; font-family: "Cambria Math", math; }
 /* Keep native scrolling; style only its visible chrome. High contrast uses OS defaults. */
 @media (forced-colors: none) {
   *::-webkit-scrollbar { width: 10px; height: 10px; }

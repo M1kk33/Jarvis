@@ -675,7 +675,7 @@ if (setupForm) {
         const content = document.createElement("div");
         content.className = "markdown";
         const draftText = liveDrafts.get(turn.id) ?? drafts.get(turn.id)?.text ?? "";
-        window.JarvisMarkdown.render(content, draftText);
+        window.JarvisMarkdown.render(content, draftText, { streaming: turn?.status === "pending" });
         partial.append(content);
         if (turn.error_code === "output_limit") {
           line(partial, tr("Ответ остановлен на лимите длины. Попросите более краткий ответ или разбейте вопрос на части."), "subtle");
@@ -824,7 +824,7 @@ if (setupForm) {
         const draft = draftNodes.get(snapshot.job.turn_id);
         if (draft) {
           const follow = messagesNode.scrollHeight - messagesNode.clientHeight - messagesNode.scrollTop < 80;
-          window.JarvisMarkdown.render(draft.content, snapshot.draft);
+          window.JarvisMarkdown.render(draft.content, snapshot.draft, { streaming: true });
           draft.card.hidden = !snapshot.draft && !draft.hasArtifacts;
           if (follow) messagesNode.scrollTop = messagesNode.scrollHeight;
         }

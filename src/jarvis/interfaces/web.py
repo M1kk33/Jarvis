@@ -361,6 +361,8 @@ def create_web_app(
             "voice_player.js",
             "settings.js",
             "marked.umd.js",
+            "katex.min.js",
+            "math.js",
             "markdown.js",
         }:
             raise HTTPException(404)
