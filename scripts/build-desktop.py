@@ -36,6 +36,8 @@ def build() -> None:
             "export",
             "--locked",
             "--no-dev",
+            "--extra",
+            "browser",
             "--no-emit-project",
             "--output-file",
             str(requirements),

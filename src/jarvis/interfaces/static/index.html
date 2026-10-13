@@ -95,6 +95,7 @@
           <button type="button" data-settings-tab="appearance" aria-pressed="true" data-i18n="Интерфейс">Интерфейс</button>
           <button type="button" data-settings-tab="voice" aria-pressed="false" data-i18n="Голос">Голос</button>
           <button type="button" data-settings-tab="model" aria-pressed="false" data-i18n="Модель">Модель</button>
+          <button type="button" data-settings-tab="internet" aria-pressed="false" data-i18n="Интернет">Интернет</button>
           <button id="statistics-tab" type="button" data-settings-tab="statistics" aria-pressed="false" hidden data-i18n="Статистика">Статистика</button>
         </nav>
         <div class="settings-content">
@@ -123,6 +124,17 @@
             <p class="setting-help" data-i18n="Это максимальная длина, а не требование писать длинно. Больший лимит оставляет меньше места для истории в контексте.">Это максимальная длина, а не требование писать длинно. Больший лимит оставляет меньше места для истории в контексте.</p>
             <p class="setting-help" data-i18n="Лимит ответа применяется после перезапуска Jarvis. Контекст и модель задаются установленным профилем.">Лимит ответа применяется после перезапуска Jarvis. Контекст и модель задаются установленным профилем.</p>
             <p id="setting-active-output" class="setting-help"></p>
+          </section>
+          <section data-settings-page="internet" aria-label="Интернет" data-i18n-aria-label="Интернет" hidden>
+            <h3 data-i18n="Чтение сайтов">Чтение сайтов</h3>
+            <label class="setting-row" for="setting-enable-network"><span data-i18n="Читать страницы по ссылке">Читать страницы по ссылке</span><input id="setting-enable-network" type="checkbox" role="switch" aria-describedby="setting-network-help"></label>
+            <p id="setting-network-help" class="setting-help" data-i18n="Jarvis сможет прочитать публичную страницу и использовать её в ответе. Перед открытием каждой ссылки он запросит ваше подтверждение.">Jarvis сможет прочитать публичную страницу и использовать её в ответе. Перед открытием каждой ссылки он запросит ваше подтверждение.</p>
+            <p id="setting-network-status" class="setting-help"></p>
+            <p id="setting-network-availability" class="setting-help" hidden data-i18n="Для чтения сайтов нужна подключённая модель.">Для чтения сайтов нужна подключённая модель.</p>
+            <label class="setting-row" for="setting-enable-browser"><span data-i18n="Обрабатывать JavaScript на странице">Обрабатывать JavaScript на странице</span><input id="setting-enable-browser" type="checkbox" role="switch" aria-describedby="setting-browser-help"></label>
+            <p id="setting-browser-help" class="setting-help" data-i18n="Дополняет чтение страниц текстом и скриншотом из отдельного браузера. Внешние скрипты и ресурсы заблокированы, поэтому некоторые сайты могут отображаться неполностью. Вход в аккаунты и отправка форм не поддерживаются.">Дополняет чтение страниц текстом и скриншотом из отдельного браузера. Внешние скрипты и ресурсы заблокированы, поэтому некоторые сайты могут отображаться неполностью. Вход в аккаунты и отправка форм не поддерживаются.</p>
+            <p id="setting-browser-status" class="setting-help"></p>
+            <p class="setting-help" data-i18n="Изменения доступа к сайтам применяются после перезапуска Jarvis. Поиск в интернете пока не поддерживается.">Изменения доступа к сайтам применяются после перезапуска Jarvis. Поиск в интернете пока не поддерживается.</p>
           </section>
           </fieldset>
           <section data-settings-page="statistics" aria-label="Статистика" data-i18n-aria-label="Статистика" hidden>

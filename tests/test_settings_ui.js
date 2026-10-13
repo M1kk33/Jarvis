@@ -6,7 +6,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 const source = fs.readFileSync(path.join(__dirname, "../src/jarvis/interfaces/static/settings.js"), "utf8");
 
-function fixture() {
+function fixture(metadata = {}) {
   const elements = new Map();
   let focused;
   const get = id => {
@@ -19,8 +19,8 @@ function fixture() {
     });
     return elements.get(id);
   };
-  const tabs = ["appearance", "voice", "model", "statistics"].map(id => { const el = get(`tab-${id}`); el.dataset.settingsTab = id; return el; });
-  const pages = ["appearance", "voice", "model", "statistics"].map(id => { const el = get(`page-${id}`); el.dataset.settingsPage = id; return el; });
+  const tabs = ["appearance", "voice", "model", "statistics", "internet"].map(id => { const el = get(`tab-${id}`); el.dataset.settingsTab = id; return el; });
+  const pages = ["appearance", "voice", "model", "statistics", "internet"].map(id => { const el = get(`page-${id}`); el.dataset.settingsPage = id; return el; });
   const root = get("root");
   const media = { matches: false, addEventListener(name, handler) { this.handler = handler; } };
   const window = { matchMedia: () => media };
@@ -33,7 +33,7 @@ function fixture() {
   const writes = [];
   const requests = [];
   let statistics = { conversations: 2, user_messages: 3, assistant_messages: 4, input_tokens: 20, output_tokens: null, counted_user_messages: 1, counted_assistant_messages: 0, regenerations: 1, generated_images: 2, failed_turns: 1, interrupted_turns: 2, pending_turns: 0, first_message_at: null, last_message_at: null };
-  const result = () => ({ preferences: { ...saved }, model_name: "Qwen installed", context_tokens: 4096, active_output_tokens: 2048, restart_required: saved.output_tokens !== 2048 });
+  const result = () => ({ preferences: { ...saved }, model_name: "Qwen installed", context_tokens: 4096, active_output_tokens: 2048, ...metadata, restart_required: saved.output_tokens !== 2048 || (saved.enable_network ?? Boolean(metadata.active_network)) !== Boolean(metadata.active_network) || (saved.enable_browser ?? Boolean(metadata.active_browser)) !== Boolean(metadata.active_browser) });
   const settings = new window.JarvisSettings({
     api: async (_url, method, preferences) => {
       requests.push(_url);
@@ -171,4 +171,52 @@ test("closing or switching scope rejects old statistics; failure hides stale tot
   await f.settings.openStatistics();
   assert.equal(f.get("statistics-results").hidden, false);
   assert.equal(f.writes.length, 0);
+});
+
+
+test("network controls retain unsaved choices until Save, enforce dependencies and show pending restart", async () => {
+  const f = fixture({ browser_available: true, active_network: false, active_browser: false });
+  await f.settings.initialize({ settings_enabled: true });
+  await f.settings.open();
+  const network = f.get("setting-enable-network"), browser = f.get("setting-enable-browser");
+  assert.equal(network.checked, false);
+  assert.equal(browser.disabled, true);
+  network.checked = true; network.handlers.change();
+  assert.equal(browser.disabled, false);
+  browser.checked = true; browser.handlers.change();
+  f.settings.close(); await f.settings.open();
+  assert.equal(network.checked, false);
+  network.checked = true; network.handlers.change(); browser.checked = true;
+  f.fail(true); await f.settings.save();
+  assert.equal(f.writes.length, 0);
+  assert.equal(f.settings.preferences.enable_network, null);
+  f.fail(false); await f.settings.save();
+  assert.equal(f.writes[0].enable_network, true);
+  assert.equal(f.writes[0].enable_browser, true);
+  assert.equal(f.settings.restartRequired, true);
+  assert.match(f.get("settings-status").textContent, /Перезапустите/);
+  assert.match(f.get("setting-network-status").textContent, /выключено/);
+  network.checked = false; network.handlers.change();
+  assert.equal(browser.checked, false);
+  assert.equal(browser.disabled, true);
+  await f.settings.save();
+  assert.equal(f.settings.restartRequired, false);
+});
+
+test("legacy launch grants remain visible and missing components cannot be newly enabled", async () => {
+  const f = fixture({ browser_available: true, active_network: true, active_browser: true });
+  await f.settings.initialize({ settings_enabled: true }); await f.settings.open();
+  assert.equal(f.get("setting-enable-network").checked, true);
+  assert.equal(f.get("setting-enable-browser").checked, true);
+  await f.settings.save();
+  assert.equal(f.writes[0].enable_network, true);
+  assert.equal(f.settings.restartRequired, false);
+  f.get("reset-settings").handlers.click();
+  assert.equal(f.get("setting-enable-network").checked, false);
+  assert.equal(f.get("setting-enable-browser").checked, false);
+  const missing = fixture({ browser_available: false });
+  await missing.settings.initialize({ settings_enabled: true }); await missing.settings.open();
+  missing.get("setting-enable-network").checked = true; missing.get("setting-enable-network").handlers.change();
+  assert.equal(missing.get("setting-enable-browser").disabled, true);
+  assert.match(missing.get("setting-browser-status").textContent, /не установлен/);
 });

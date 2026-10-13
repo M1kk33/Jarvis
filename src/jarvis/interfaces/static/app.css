@@ -222,6 +222,12 @@ summary { cursor: pointer; }
 .setting-row { display: flex; justify-content: space-between; align-items: center; gap: 18px; min-height: 58px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .setting-row select { max-width: 200px; min-width: 150px; padding: 8px 10px; background: #222830; color: inherit; border: 1px solid var(--line); border-radius: 8px; }
 .setting-row input[type="range"] { width: 180px; max-width: 50%; accent-color: var(--accent); }
+.setting-row input[role="switch"] { appearance: none; flex: 0 0 40px; width: 40px; height: 24px; padding: 3px; margin: 0; border: 1px solid var(--line); border-radius: 20px; background: var(--line); cursor: pointer; }
+.setting-row input[role="switch"]::before { content: ""; display: block; width: 16px; height: 16px; border-radius: 50%; background: currentColor; transition: transform .15s; }
+.setting-row input[role="switch"]:checked { background: var(--accent); }
+.setting-row input[role="switch"]:checked::before { transform: translateX(16px); background: var(--accent-ink); }
+.setting-row input[role="switch"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.setting-row input[role="switch"]:disabled { opacity: .4; cursor: default; }
 .setting-row output { color: var(--muted); margin-left: 8px; font-size: 12px; }
 .setting-help { font-size: 12px; line-height: 1.7; color: var(--muted); margin: 12px 0 0; }
 .model-name { padding: 14px; border-radius: 10px; background: #ffffff06; color: var(--accent); overflow-wrap: anywhere; }

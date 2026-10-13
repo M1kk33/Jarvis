@@ -14,7 +14,7 @@ window.JarvisSettings = class {
     this.statisticsScope = document.getElementById("statistics-scope");
     this.statisticsScope.addEventListener("change", () => this.loadStatistics());
     document.getElementById("refresh-statistics").addEventListener("click", () => this.openStatistics());
-    this.preferences = { theme: "dark", accent: "mint", text_size: 14, send_shortcut: "enter", voice_volume: 80, output_tokens: 2048, language: "ru" };
+    this.preferences = { theme: "dark", accent: "mint", text_size: 14, send_shortcut: "enter", voice_volume: 80, output_tokens: 2048, language: "ru", enable_network: null, enable_browser: null };
     this.defaults = { ...this.preferences };
     this.dialog = document.getElementById("settings-dialog");
     this.launch = document.getElementById("open-settings");
@@ -32,6 +32,8 @@ window.JarvisSettings = class {
     document.getElementById("reset-settings").addEventListener("click", () => { if (this.saving) return; this.fill(this.defaults); this.status.textContent = st("Нажмите «Сохранить», чтобы применить."); });
     document.getElementById("settings-form").addEventListener("submit", event => { event.preventDefault(); this.save(); });
     this.controls.voice_volume.addEventListener("input", () => this.updateVolumeLabel());
+    this.controls.enable_network.addEventListener("change", () => this.updateNetworkControls());
+    this.controls.enable_browser.addEventListener("change", () => this.updateNetworkControls());
     this.tabs = [...document.querySelectorAll("[data-settings-tab]")];
     this.pages = [...document.querySelectorAll("[data-settings-page]")];
     for (const tab of this.tabs) tab.addEventListener("click", () => {
@@ -94,17 +96,32 @@ window.JarvisSettings = class {
     document.getElementById("setting-context").textContent = st`${this.result.context_tokens.toLocaleString(locale)} токенов`;
     document.getElementById("setting-active-output").textContent = st`Сейчас действует: ${this.result.active_output_tokens.toLocaleString(locale)} токенов.`;
     document.getElementById("setting-voice-availability").textContent = this.spokenEnabled ? st("Голосовой модуль подключён.") : st("Голосовой модуль не подключён в текущем запуске.");
+    document.getElementById("setting-network-status").textContent = this.result.active_network ? st("Чтение сайтов включено в текущем запуске.") : st("Чтение сайтов выключено в текущем запуске.");
+    document.getElementById("setting-browser-status").textContent = this.result.browser_available ? (this.result.active_browser ? st("Обработка JavaScript включена в текущем запуске.") : st("Обработка JavaScript выключена в текущем запуске.")) : st("Браузерный компонент не установлен или не прошёл проверку. Чтение обычных страниц доступно отдельно.");
+    document.getElementById("setting-network-availability").hidden = this.result.network_available !== false;
+  }
+
+  updateNetworkControls() {
+    const network = this.controls.enable_network;
+    const browser = this.controls.enable_browser;
+    if (!network.checked) browser.checked = false;
+    network.disabled = this.result?.network_available === false && !network.checked;
+    browser.disabled = !network.checked || (!this.result?.browser_available && !browser.checked);
   }
 
   fill(preferences) {
-    for (const [key, control] of Object.entries(this.controls)) control.value = String(preferences[key]);
+    for (const [key, control] of Object.entries(this.controls)) {
+      if (key === "enable_network" || key === "enable_browser") control.checked = Boolean(preferences[key] ?? (preferences === this.defaults ? false : this.result?.[key === "enable_network" ? "active_network" : "active_browser"]));
+      else control.value = String(preferences[key]);
+    }
     this.updateVolumeLabel();
+    this.updateNetworkControls();
   }
 
   async open() {
     if (this.dialog.open) return;
     this.fill(this.preferences);
-    this.status.textContent = this.restartRequired ? st("Изменение лимита ожидает перезапуска.") : "";
+    this.status.textContent = this.restartRequired ? st("Изменения ожидают перезапуска Jarvis.") : "";
     this.dialog.showModal();
     if (this.statisticsActive) this.openStatistics();
     const generation = this.readGeneration = (this.readGeneration || 0) + 1;
@@ -116,7 +133,7 @@ window.JarvisSettings = class {
       if (generation !== this.readGeneration) return;
       this.accept(result);
       this.fill(this.preferences);
-      this.status.textContent = this.restartRequired ? st("Изменение лимита ожидает перезапуска.") : "";
+      this.status.textContent = this.restartRequired ? st("Изменения ожидают перезапуска Jarvis.") : "";
     } catch (error) { if (generation === this.readGeneration) this.status.textContent = error.message; }
     finally {
       if (generation === this.readGeneration) {
@@ -180,7 +197,7 @@ window.JarvisSettings = class {
 
   async save() {
     if (this.saving || !this.loaded || this.statisticsActive) return;
-    const preferences = Object.fromEntries(Object.entries(this.controls).map(([key, control]) => [key, ["text_size", "voice_volume", "output_tokens"].includes(key) ? Number(control.value) : control.value]));
+    const preferences = Object.fromEntries(Object.entries(this.controls).map(([key, control]) => [key, ["enable_network", "enable_browser"].includes(key) ? Boolean(control.checked) : ["text_size", "voice_volume", "output_tokens"].includes(key) ? Number(control.value) : control.value]));
     this.saving = true;
     this.saveButton.disabled = true;
     this.fields.disabled = true;
@@ -188,7 +205,7 @@ window.JarvisSettings = class {
     this.status.textContent = st("Сохраняю…");
     try {
       this.accept(await this.api("/api/settings", "POST", preferences));
-      this.status.textContent = this.restartRequired ? st("Сохранено. Перезапустите Jarvis для изменения лимита.") : st("Сохранено");
+      this.status.textContent = this.restartRequired ? st("Сохранено. Перезапустите Jarvis, чтобы применить изменения.") : st("Сохранено");
     } catch (error) { this.status.textContent = error.message; }
     finally { this.saving = false; this.saveButton.disabled = false; this.fields.disabled = false; this.resetButton.disabled = false; }
   }

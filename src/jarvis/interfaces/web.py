@@ -99,6 +99,8 @@ class _Preferences(_Input):
     voice_volume: int
     output_tokens: int
     language: str = "ru"
+    enable_network: bool | None = None
+    enable_browser: bool | None = None
 
 
 def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -389,8 +391,11 @@ def create_web_app(
             "model_name": settings.model_name,
             "context_tokens": settings.context_tokens,
             "active_output_tokens": settings.active_output_tokens,
-            "restart_required": preferences.output_tokens
-            != settings.active_output_tokens,
+            "active_network": settings.active_network,
+            "active_browser": settings.active_browser,
+            "browser_available": settings.browser_available,
+            "network_available": settings.network_available,
+            "restart_required": settings.restart_required(preferences),
         }
 
     @app.get("/api/settings")
@@ -410,7 +415,10 @@ def create_web_app(
             preferences = Preferences(**supplied.model_dump())
         except ValueError as exc:
             raise HTTPException(422, "Invalid preferences") from exc
-        return settings_payload(await settings.save(preferences))
+        try:
+            return settings_payload(await settings.save(preferences))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @app.get("/api/statistics")
     async def read_statistics(request: Request, conversation_id: str | None = None):

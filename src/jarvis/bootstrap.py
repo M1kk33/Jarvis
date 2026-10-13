@@ -116,6 +116,19 @@ def main(
                     )
                 if args.enable_browser and not args.enable_network:
                     raise ValueError("Browser requires --enable-network")
+                network_enabled = browser_enabled = False
+                browser_profile = None
+                if args.command == "web" and args.profile:
+                    network_enabled, browser_enabled = preferences.network_options(
+                        args.enable_network, args.enable_browser
+                    )
+                    try:
+                        browser_profile = BrowserProfile.installed()
+                    except (ValueError, OSError):
+                        # Keep chat/settings usable when an optional component is
+                        # missing or changed; never advertise an unverified browser.
+                        pass
+                    browser_enabled = browser_enabled and browser_profile is not None
                 if args.profile and args.command in {
                     "send",
                     "session",
@@ -288,9 +301,9 @@ def main(
                     capabilities = {"clock"}
                     if args.read_root:
                         capabilities.add("read_files")
-                    if args.enable_network:
+                    if network_enabled:
                         capabilities.add("network")
-                    if args.enable_browser:
+                    if browser_enabled:
                         capabilities.add("browser")
                     file_service = None
                     if args.write_root:
@@ -311,15 +324,19 @@ def main(
                             manager,
                             image_profile.admission_profile(),
                         )
-                    web_backend = PublicPageFetcher() if args.enable_network else None
+                    web_backend = PublicPageFetcher() if network_enabled else None
                     browser_service = None
-                    if args.enable_browser:
-                        assert manager is not None and web_backend is not None
+                    if browser_enabled:
+                        assert (
+                            manager is not None
+                            and web_backend is not None
+                            and browser_profile is not None
+                        )
                         browser_service = BrowserService(
                             store,
                             web_backend,
                             SafeBrowserRenderer(
-                                BrowserProfile.installed(),
+                                browser_profile,
                                 store.data_dir / "run" / "browser",
                             ),
                             SystemRamProbe(),
@@ -331,9 +348,9 @@ def main(
                         ToolPolicy(
                             version=(
                                 "m14-v1"
-                                if args.enable_browser
+                                if browser_enabled
                                 else "m13-v1"
-                                if args.enable_network
+                                if network_enabled
                                 else "m9-v1"
                                 if file_service is not None
                                 else "m5-v1"
@@ -456,6 +473,10 @@ def main(
                             model_name=profile.name if profile else "Тестовая модель",
                             active_output_tokens=service.context.output_allowance,
                             context_tokens=service.context.window,
+                            active_network=network_enabled,
+                            active_browser=browser_enabled,
+                            browser_available=browser_profile is not None,
+                            network_available=profile is not None,
                         ),
                     )
                     if web_control is None:

@@ -217,5 +217,21 @@
   "видеопамяти": "VRAM",
   "не выполнено": "not completed",
   "Сначала завершите или отмените запрос в этом диалоге.": "Finish or cancel this chat's request first.",
-  "Сначала разберите незавершённые действия в этом диалоге.": "Resolve this chat's unfinished actions first."
+  "Сначала разберите незавершённые действия в этом диалоге.": "Resolve this chat's unfinished actions first.",
+  "Интернет": "Internet",
+  "Чтение сайтов": "Reading websites",
+  "Читать страницы по ссылке": "Read pages from links",
+  "Jarvis сможет прочитать публичную страницу и использовать её в ответе. Перед открытием каждой ссылки он запросит ваше подтверждение.": "Jarvis can read a public page and use it in a reply. Each link requires your approval before it is opened.",
+  "Для чтения сайтов нужна подключённая модель.": "Reading websites requires a configured model.",
+  "Обрабатывать JavaScript на странице": "Process JavaScript on pages",
+  "Дополняет чтение страниц текстом и скриншотом из отдельного браузера. Внешние скрипты и ресурсы заблокированы, поэтому некоторые сайты могут отображаться неполностью. Вход в аккаунты и отправка форм не поддерживаются.": "Adds text and a screenshot from a separate browser. External scripts and resources are blocked, so some websites may appear incomplete. Signing in and submitting forms are not supported.",
+  "Изменения доступа к сайтам применяются после перезапуска Jarvis. Поиск в интернете пока не поддерживается.": "Website access changes apply after restarting Jarvis. Web search is not yet supported.",
+  "Чтение сайтов включено в текущем запуске.": "Reading websites is enabled in this session.",
+  "Чтение сайтов выключено в текущем запуске.": "Reading websites is disabled in this session.",
+  "Обработка JavaScript включена в текущем запуске.": "JavaScript processing is enabled in this session.",
+  "Обработка JavaScript выключена в текущем запуске.": "JavaScript processing is disabled in this session.",
+  "Браузерный компонент не установлен или не прошёл проверку. Чтение обычных страниц доступно отдельно.": "The browser component is missing or failed verification. Reading ordinary pages is available separately.",
+  "Изменения ожидают перезапуска Jarvis.": "Changes are waiting for a Jarvis restart.",
+  "Сохранено. Перезапустите Jarvis, чтобы применить изменения.": "Saved. Restart Jarvis to apply the changes.",
+  "Браузерный компонент недоступен.": "The browser component is unavailable."
 }

@@ -2,6 +2,14 @@
 
 Date: 11 October 2026. Status: installed preview with an offline first-install component pack; not a signed public release or a clean-Windows certification.
 
+### 0.5.8 website access settings
+
+- Settings → Internet offers “Read pages from links” and “Process JavaScript on pages”, in Russian and English. Choices are saved atomically with existing preferences and apply after restart; the current session keeps its original capabilities. Switching reading off clears/disables JavaScript processing. The panel distinguishes saved choices from active access and explains per-URL approval, external-resource limits and the absence of web search.
+- Legacy preferences inherit explicit launch grants. Once saved, the selected grants take precedence over legacy desktop/terminal defaults, including an explicit disable. Existing data is not rewritten on read and no schema migration is needed. Missing/changed browser components disable browser rendering while leaving chat, basic retrieval and settings usable; unavailable components cannot be newly enabled through the API.
+- The desktop package includes the existing pinned Playwright extra. The separately installed pinned headless shell is verified before the capability is advertised and before each render; startup/settings never download it. The existing M13/M14 approval, destination, isolation, request bounds and owned-process rules are unchanged. No new inference tool or search provider was added.
+- Offline qualification: **412 Python tests passed, 3 hardware opt-ins skipped; 60 JavaScript tests passed**. Ruff and mypy passed. Tests cover saved startup capabilities, legacy grants/explicit disabling, unavailable components, strict API/authentication/CSRF, pending restart and dependency/cancel/save behavior. The packaged interface passed **30** theme/tab/viewport combinations and additional Russian/English Internet layouts, with no JavaScript errors. Packaged Python successfully rendered inline JavaScript and a PNG through the existing isolated worker, verifying staging cleanup. Installer: `dist/Jarvis-0.5.8.msi`.
+- MSI upgrade succeeded; all **2,382** packaged files matched. Installed native smoke passed with verified full tree exit, and the installed Python/browser worker passed inline-JavaScript/PNG verification. The ordinary app was reopened with its saved English interface. A read-only before/after audit confirmed history, preferences and schema unchanged except the documented startup `job_steps.updated_at` timestamps.
+
 ### 0.5.7 English interface
 
 - Settings → Appearance now offers Russian and English interface languages. Save applies the committed language immediately and persists it across restarts; Cancel and failed saves retain the current language. Existing preferences default to Russian without a schema migration or rewriting stored preferences. Model prompts, context/output budgets and inference behavior are unchanged.

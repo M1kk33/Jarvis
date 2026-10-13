@@ -12,8 +12,16 @@ class Preferences:
     voice_volume: int = 80
     output_tokens: int = 2048
     language: str = "ru"
+    # None preserves launch options for installations predating these controls.
+    enable_network: bool | None = None
+    enable_browser: bool | None = None
 
     def __post_init__(self) -> None:
+        for option in (self.enable_network, self.enable_browser):
+            if option is not None and type(option) is not bool:
+                raise ValueError("Invalid network preference")
+        if self.enable_browser is True and self.enable_network is not True:
+            raise ValueError("Browser requires network access")
         for value, allowed in (
             (self.theme, {"dark", "light", "system"}),
             (self.accent, {"mint", "blue", "violet"}),
@@ -32,3 +40,8 @@ class Preferences:
             2048,
         }:
             raise ValueError("Invalid output token limit")
+
+    def network_options(self, network: bool, browser: bool) -> tuple[bool, bool]:
+        network = network if self.enable_network is None else self.enable_network
+        browser = browser if self.enable_browser is None else self.enable_browser
+        return network, browser and network
