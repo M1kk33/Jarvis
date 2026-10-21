@@ -1,132 +1,14 @@
-# Jarvis (M15)
+# Jarvis
 
-Jarvis supports durable terminal and local-browser conversations with a deterministic offline fake or one pinned local Qwen3-4B text model. M8 adds one optional local SD 1.5 image tool with verified text/image handoff and durable PNG artifacts. M9 adds one approval-only tool to create a new UTF-8 `.txt` file in an explicitly granted directory. The browser shows chat, history, jobs, progress, exact-action approvals, and locally generated images on `127.0.0.1`. Durable cancellation, explicit recovery, and verified backup/restore remain available. The three initial read-only tools remain current UTC time, bounded directory listing, and bounded UTF-8 file reading. M13 adds optional, approved public-page retrieval. No shell, edit, or delete tool is available.
+Jarvis is a project to build a multitasking AI assistant that brings powerful models and practical tools together in one place.
 
-M10 adds optional push-to-talk transcription. A short microphone recording becomes editable text in the browser composer; it is never sent or treated as a tool command until the user explicitly submits it. The pinned faster-whisper base INT8 worker runs on CPU in a separate environment. See [speech worker setup](docs/SPEECH_WORKER.md) and add `--speech-profile E:\JarvisData\speech.toml` before `web` to enable Record.
+The idea is to give the assistant a goal and let it organize the work: break it into tasks, set priorities, delegate each task to a suitable model, and use the tools needed to get it done. Jarvis should coordinate model access to limited hardware resources, deciding which work runs first and when to switch models.
 
-M11 adds optional local spoken playback for completed assistant replies. A **Play voice** control reads the saved text through one pinned CPU Piper voice; **Stop voice** interrupts playback, and synthesis failure leaves the text available. See [Piper voice setup](docs/PIPER_WORKER.md) and add `--piper-profile E:\JarvisData\piper.toml` before `web` to enable it. Voice never authorizes a tool action.
+The focus is on:
 
-M12 adds one explicit screenshot upload and question in the browser. Add `--vision-profile E:\JarvisData\vision.toml` beside the text `--profile` to enable the preview and local vision model. The screenshot is saved with its question and answer as a private artifact and included in backups; M12 provides no per-screenshot deletion control. See [vision setup and limits](docs/VISION_WORKER.md). The model does not control the screen or authorize tools.
+- **Multitasking:** managing several tasks and their dependencies.
+- **Tools:** working with text, images, voice, files, and web sources.
+- **Delegation:** choosing suitable models for different parts of a task.
+- **Priorities:** scheduling work around urgency and available resources.
 
-M13 adds `--enable-network` for a model-backed `web` session. The browser asks for a fresh approval showing the exact public HTTP(S) URL, including its path and query, before each GET. Check that URL for private data before approving: the whole path and query are sent to the site. Retrieval accepts HTML or plain text, extracts bounded text as untrusted evidence, and never follows redirects or loads images/subresources. Local/private/metadata destinations, URL credentials, uploads, cookies, nonstandard ports, and search tools are unavailable. Browser rendering requires M14's separate flag. Ordinary chat remains offline without the flag.
-
-M14 adds `--enable-browser` alongside `--enable-network` for a model-backed `web` session. After exact-URL approval, Jarvis fetches the HTML through the M13 destination checks, then renders it in a fresh, offline Playwright Chromium worker. It returns bounded rendered text and a private screenshot. Inline JavaScript can update the page; external scripts, images, frames, page-initiated requests, redirects, popups, downloads, and service workers are blocked. This deliberately supports self-contained JavaScript pages, not general logged-in or asset-heavy sites. See [browser setup and limits](docs/BROWSER_WORKER.md).
-
-In the Windows app, **Settings → Internet** controls public-page reading and optional JavaScript processing. Save, then restart Jarvis to apply access changes. The panel shows what is active in the current session; every URL still requires a fresh approval. Saved choices override older launch defaults. Ordinary large pages are saved and processed in overlapping chunks sized with the active model's exact tokenizer and context/output limits. Progress and explicit continuation reuse saved checkpoints without another GET. Notes cover contiguous regions even without headings; whole-page explanations receive a final subject/subtopic coverage check. Tool details show coverage and saved source text; compressed summaries and evidence may still omit details. See [large-page analysis and bounds](docs/PAGE_ANALYSIS.md). The optional JavaScript renderer retains its existing bounded excerpts. If the pinned browser component is unavailable, ordinary page reading remains independent and the panel explains why JavaScript processing is unavailable.
-
-M15 adds explicit local retrieval. `memory-add`, `memory-list`, `memory-edit`, and `memory-delete` manage global or conversation-scoped memories. `retrieval-root-add PATH` grants a global or conversation-scoped document directory; `document-import ROOT_ID PATH` indexes one UTF-8 `.txt` or `.md` file (up to 256 KiB). `document-list`, `document-reindex ID`, and `document-delete ID` manage indexed sources; `retrieval-root-revoke ID` immediately removes that root's searchable chunks. `retrieve CONVERSATION_ID QUESTION` displays source-labelled matches. Chat retrieves at most three bounded excerpts, checks the source hash before use, and treats them as untrusted context. Import and reindex run only on explicit commands; there is no background crawler. After editing a source, run `document-reindex ID`; until then its stale chunks are excluded. See [local retrieval setup](docs/RETRIEVAL.md).
-
-## Setup
-
-On Windows, install [uv](https://docs.astral.sh/uv/) and run from this directory:
-
-```powershell
-uv sync --python 3.12
-```
-
-This installs the locked Python dependencies. The offline fake and tests require no model download or GPU. The local model requires native Windows, a compatible NVIDIA GPU and driver, and the pinned runtime/model files. The data directory is always chosen explicitly; use a private local folder outside the source repository, for example `E:\JarvisData`.
-
-## Double-click launch on Windows
-
-A separately installed **Jarvis Preview** provides a native C# + WebView2 host, private Python/.NET runtimes and a per-user MSI. First launch can reuse an existing data folder or install the five existing model profiles from a verified offline archive into a new folder. See [native desktop build, checks and release limitations](docs/NATIVE_DESKTOP.md). The following instructions describe the retained legacy launcher.
-
-After installing the locked environment and preparing `model.toml`, install the shortcut once:
-
-```powershell
-.\scripts\install-shortcut.ps1 -DataDir E:\JarvisData
-```
-
-Double-click **Jarvis** on the desktop or in the Start menu. It now opens a dedicated Windows application window, without a console or a browser tab, and signs in automatically. Close the window to stop Jarvis: it remains visible with a shutdown message until the server finishes its normal job/model cleanup. Repeated clicks focus the existing window; the database lock also protects against a separate terminal instance. Startup failures appear in a dialog. The Python environment remains an internal dependency; you do not need to start or stop a script yourself.
-
-The desktop shell uses pinned pywebview 6.1 and the installed **Microsoft Edge WebView2 Runtime**, not a bundled Electron/Chromium distribution. Run `uv sync --locked --python 3.12` after updating an older checkout, then reinstall the shortcuts to get the Jarvis icon. If WebView2 is missing, install Microsoft's WebView2 Evergreen Runtime. The explicit terminal `web` command remains available for ordinary browsers.
-
-The interface has a dark Russian layout, a compact composer, Enter to send (Shift+Enter adds a newline), and a collapsible **Действия** panel. New approvals or unresolved outcomes open that panel automatically and show a count; closing the panel never approves or acknowledges an action. Paste an image into the composer with Ctrl+V, drag a file into the window, or use the file picker. PNG/JPEG/WebP inputs up to 20 MiB are converted locally to PNG within the existing 1024-pixel/2-MiB limits, previewed, and sent only with your message. Voice, screenshot questions, approvals and history still use the existing authenticated HTTP endpoints.
-
-New image requests use an application-chosen seed derived from the committed invocation identity, so repeated descriptions produce new variations. The model-facing image tool accepts only a prompt. The effective seed is saved in the result and receipt; a duplicate submission returns its committed image without generating another one. Stored legacy calls retain their explicit seeds.
-
-The window runs in a creation-time kill-on-close Windows Job Object; all WebView2 descendants inherit ownership without breakaway. A per-launch private WebView profile separates it from ordinary browser sessions. The one-time setup URL is sent over a pipe, never in the child command line. Closing requests graceful server shutdown before the host is stopped and its full process tree is verified. Window navigation is restricted to this launch's loopback origin; no Python application API is exposed to page content. See [desktop verification](docs/DESKTOP_APP.md).
-
-The target desktop architecture, including native permissions/file dialogs, packaging, resource targets and release checks, is recorded in [desktop architecture](docs/DESKTOP_ARCHITECTURE.md). Its preview implementation and remaining release requirements are tracked in [native desktop status](docs/NATIVE_DESKTOP.md).
-
-Shortcut installation verifies the native interpreter's physical location and updates only the `home` entry in `.venv\pyvenv.cfg` atomically. It also verifies the virtual environments explicitly referenced by installed image, speech and Piper profiles, preserving each worker's Python version. This matters when setup runs inside a Microsoft Store editor whose AppData paths are redirected: the ordinary desktop must use the real path. No application data, dependencies, or models are recreated. If that editor recreates the virtual environment, reinstall the shortcuts to verify its home again.
-
-The shortcut uses a hidden Windows PowerShell bootstrap to read the current interpreter path from `.venv\pyvenv.cfg`, check its `pythonw.exe`, and start it with CPython's virtual-environment launcher identity. This bypasses the extra `.venv\Scripts\pythonw.exe` redirector while preserving the project's dependencies and worker interpreter identity. Arguments are passed directly to Python, never evaluated as shell code. The existing private data directory is retained. The shortcut includes `model.toml` and any existing `image.toml`, `speech.toml`, `piper.toml`, and `vision.toml` profiles at installation time. It neither downloads models nor grants filesystem access. Network tools remain off unless the shortcut is installed with `-EnableNetwork`; browser rendering additionally requires `-EnableBrowser` and the separately installed browser extra. Reinstall the shortcut after moving the project/data directory or changing which profiles should be included. The desktop window uses the installed project environment; a standalone redistributable installer is not included.
-
-The single-use sign-in token travels in the URL fragment, never in an HTTP request URL or a log, and the setup page removes it from browser history before exchanging it. Use the same default browser when reopening the interface. If its session cookie is cleared or a different browser is used, stop and relaunch Jarvis to obtain a fresh sign-in.
-
-## Terminal commands
-
-```powershell
-uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData create "My chat"
-uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData list
-uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData send CONVERSATION_ID "Hello"
-uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData resume CONVERSATION_ID
-uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData jobs
-uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData status JOB_ID
-uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData cancel JOB_ID
-uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData resume-job JOB_ID
-uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData diagnostics
-uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData backup
-uv run --python 3.12 python -m jarvis --data-dir E:\RestoredJarvisData restore E:\JarvisData\backups\BACKUP_ID
-uv run --python 3.12 python -m jarvis --data-dir E:\JarvisData web
-```
-
-For the local model, copy [the example profile](profiles/qwen3-4b-instruct-2507.example.toml) to `E:\JarvisData\model.toml` and place its exact pinned files at the paths in that profile. M4 pins llama.cpp b11429 (Windows CUDA 12.4, `llama-server.exe` SHA-256 `7e236243c9b670c6a49410c03186fd575c57a0efe3fd8a21d8727503d571d5b6`) and `bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF` revision `ae44f08e1392f39c0e474af10c3ff8355c8b6688`, Q4_K_M GGUF SHA-256 `2fde00ce69dd4899c70d020845e2638353015bba0fdf161b3eb965f2bca4464e`. Change `device_uuid` and `device_index` only to match the GPU being used. Downloads are explicit setup actions; normal chat works offline. The runtime and model remain outside this repository. See the [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases/tag/b11429) and [GGUF conversion](https://huggingface.co/bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF/tree/ae44f08e1392f39c0e474af10c3ff8355c8b6688) for the pinned sources.
-
-For image generation, install the separately pinned ComfyUI environment and FP16 SD 1.5 checkpoint as described in [the M8 worker setup](docs/IMAGE_WORKER.md). Copy [the image profile](profiles/sd15-512.example.toml) to `E:\JarvisData\image.toml`, set the same GPU identity as the text profile, and add `--image-profile E:\JarvisData\image.toml` alongside `--profile` for `send`, `session`, `resume-job`, or `web`. The tool is exposed only when both profiles are supplied. It generates at most one 512×512 image per turn with a fixed workflow; no other image graph or model is available.
-
-```powershell
-uv run --offline --locked --python 3.12 python -m jarvis --data-dir E:\JarvisData --profile E:\JarvisData\model.toml calibrate
-uv run --offline --locked --python 3.12 python -m jarvis --data-dir E:\JarvisData --profile E:\JarvisData\model.toml session CONVERSATION_ID
-```
-
-`calibrate` records system-wide free-memory samples about every 250 ms, load time, first-token time, throughput, hashes, and driver version in private `calibration.json`. It checks a long prompt and direct unauthenticated requests before reporting whether the profile bounds passed. It does not change the profile automatically; set `calibrated = true` in the private profile only after a successful run on this hardware. In `session`, type `/jobs`, `/status JOB_ID`, `/cancel JOB_ID`, `/resume-job JOB_ID`, `/unload`, or `/exit`. A one-shot `send` also accepts `--profile` and unloads before exiting. The model server uses one 4,096-token slot and a per-launch secret.
-
-For a model-backed browser session, add `--profile E:\JarvisData\model.toml` before `web`; add narrow `--read-root` grants in the same way as a terminal session. `web` binds only to `127.0.0.1` on port 8765 by default (`--port` selects another local port). Open the printed `/setup` address and enter the one-time token printed in the terminal. The token is exchanged once for a browser-session cookie; keep the server running while using the page. A second tab in that browser can view or cancel the same job. Closing a tab leaves active work running; stopping the server waits for active jobs to settle.
-
-To enable M9 file creation in the browser, add `--write-root E:\YourApprovedFolder` to the model-backed `web` command. The directory must already exist on a local fixed drive and must not include Jarvis private state or installed source. The tool creates only a new `.txt` file directly or inside an existing subdirectory under that grant, with at most 8 KiB of UTF-8 content. The browser shows the exact destination and full content before a fresh, single-use approval. Existing files are never overwritten. If a crash leaves the result uncertain, use the browser's **Verify file** control or `uv run --offline --locked --python 3.12 python -m jarvis --data-dir E:\JarvisData --write-root E:\YourApprovedFolder reconcile-file INVOCATION_ID`. Verification checks the original parent identity, path, and content; it never repeats the write. See [M9 file creation](docs/FILE_CREATION.md).
-
-Assistant replies and drafts support Markdown headings, emphasis, lists, quotes, code and tables. User messages and tool details remain literal text. The interface builds formatting from an allowlist of DOM elements; model HTML stays text, and Markdown links/images remain inert text without navigation or resource loading. Its restrictive Content Security Policy also blocks external resource loads. Locally generated PNGs appear separately under Jarvis through a verified, authenticated same-origin preview route and can be downloaded; uploaded screenshots stay under the user's message. Mutations require the session cookie, same-origin requests, and a CSRF token. Artifact downloads require the same session and serve only verified stored artifacts as attachments. Approval cards display the tool, canonical arguments, target, policy, and owning job before the user approves or rejects. Current default read-only tools normally do not require approval. See [bundled UI component provenance](docs/THIRD_PARTY_UI.md).
-
-Completed replies have small copy and speaker icons (when voice is configured). Copy preserves the reply's raw Markdown. The last prompt also has a regenerate icon: it starts a fresh durable job using that prompt's original context and keeps every earlier answer, draft and artifact. Arrows browse saved versions; browsing an earlier version does not change subsequent context, which uses the latest completed version. Regeneration retains the original screenshot for vision questions. Session/CSRF checks and existing runtime/tool-approval rules still apply.
-
-Drag the boundary beside the chat list to resize the sidebar in the current window. The boundary uses a horizontal resize cursor, supports Left/Right and Home/End when focused, and resets to the responsive default on double-click. Escape cancels an active drag. Width is constrained to 150–420 CSS pixels and leaves space for the conversation on small windows; resizing preserves chat selection, scroll position, the composer draft and streamed replies.
-
-To enable file reads, create a narrow workspace directory and grant it explicitly. The private data directory itself cannot be a read root. Without `--read-root` or `--enable-network`, model sessions expose only `current_time`.
-
-```powershell
-uv run --offline --locked --python 3.12 python -m jarvis --data-dir E:\JarvisData --profile E:\JarvisData\model.toml --read-root E:\JarvisData\workspaces\default session CONVERSATION_ID
-```
-
-Paths must be absolute and remain inside an approved root. Jarvis rejects traversal, reparse points, hard links, alternate data streams, device/UNC paths, private configuration, secrets, and non-regular files. A file read is capped at 16 KiB; a listing at 100 entries. Tool calls run sequentially with a four-call limit per turn. Completed calls and results remain available to later conversation context after restart, including when the final reply was interrupted. `resume` shows each tool's durable status. The approval record and trusted fake UI are exercised in tests; the three initial tools are allowed by policy when their capabilities are enabled, so no approval prompt is presented in the terminal.
-
-`create` prints the conversation ID. `send` prints a submission ID before calling the provider. Reuse it with `send CONVERSATION_ID "Hello" --submission-id SUBMISSION_ID` if a command's outcome is unclear; the same ID and text return the stored outcome without calling the provider again. A different text with that ID is rejected. An interrupted or failed turn remains visible in `resume` and is not silently replayed. Only one application instance may open a data directory at a time.
-
-Every new send atomically stores the user turn and a queued job. The runner executes one job at a time and keeps at most 16 queued jobs. A restart retains queued jobs and marks unfinished running jobs interrupted; neither resumes automatically. Use `resume-job` explicitly, with the original `--profile` and `--read-root` settings for a model job. Three attempts are allowed for safe unfinished computation. Unknown tool effects block replay and further turns in that conversation. Cancellation is recorded before cleanup; a real-model cancellation remains pending after a crash until the prior worker tree can be verified gone with the original profile. Completed tool results remain visible even if the surrounding job is cancelled. Closing an interactive session waits for active work; request `/cancel JOB_ID` first when you want it stopped.
-
-Approvals queue through that same runner. Cancelling an approved action waits for its bounded execution and cleanup, retaining any committed receipt. Closing the browser server cancels dispatched jobs and waits for cleanup. Each execution segment has a persisted, enforced ten-minute deadline; approving a waiting step starts a new execution segment within the same attempt.
-
-The browser shows uncertain actions and saved tool receipts in conversation history. For an uncertain file creation, **Verify file** checks the exact file and hash without creating it. For any uncertain action, cancel its unresolved job, inspect the proposal and any external effects, then choose **Acknowledge uncertain outcome** to allow independent new messages. The action stays `outcome_unknown`, with a durable acknowledgment timestamp, and can never resume or replay. The same recovery is available with `jarvis --data-dir E:\JarvisData acknowledge-tool INVOCATION_ID`; use `resume CONVERSATION_ID` to inspect the proposal, receipt, and result first. Acknowledgment does not claim that the action succeeded or failed.
-
-`backup` creates a SQLite snapshot and an artifact manifest under the private `backups` directory. `restore` requires an empty destination and verifies the snapshot and every referenced artifact without needing the original data directory. Model binaries and caches are not included; keep their pinned copies separately. Incomplete backups remain marked as incomplete for inspection. `diagnostics` reports queue state, recent normalized failures, memory availability, and configured model hashes without prompt or file contents. Image files are staged, flushed, verified, and atomically renamed before their SQLite result is committed; any unreferenced file after a crash remains for inspection rather than being replayed.
-
-The fake provider streams an echo with the count of selected messages it received, making restart reconstruction visible. The default budget is 4,096 estimated tokens including 512 for output and 256 for overhead; oversized required input fails explicitly and older exchanges are removed as whole groups. A partial response is kept as a draft and marked interrupted after failure or restart, never shown as a completed reply. Diagnostic metadata is stored in `logs/diagnostics.jsonl` under the chosen data directory; prompts and response text are excluded. The fake provider is for testing behavior, not useful AI responses.
-
-The manager admits at most one resident heavy worker, retains a named per-device lock while warm, and releases it only after the owned process tree exits. It checks the profile's cold peak or warm additional headroom against 1 GiB free VRAM and 3 GiB available RAM reserves. Missing GPU telemetry permits only a previously calibrated profile and is reported as degraded; missing RAM telemetry blocks admission. The Windows supervisor assigns the model process to a kill-on-close Job Object at creation and verifies cleanup.
-
-Profiles require a full GPU UUID. A successful NVIDIA query that disagrees with the configured index blocks admission even for a calibrated profile. UUID case variants share one ownership lock; model workers see only the configured UUID as CUDA device zero. Unverified transcription, Piper, or browser cleanup blocks the shared work slot. Speech worker output uses an explicit UTF-8 protocol bounded to 64 KiB including its JSON envelope. Public-page retrieval enforces an absolute ten-second deadline across DNS, connection, headers, and body; cancellation interrupts the live socket before releasing execution ownership.
-
-On this PC (RTX 3060 Ti 8 GiB, driver 576.80), the M4 qualification used a 2,810-token prompt and observed a 3.136 GiB VRAM / 2.947 GiB RAM cold peak, then up to 0.082 GiB VRAM / 0.170 GiB RAM additional demand while warm. Load took 3.315 s, first token 0.993 s, and the 371-token reply averaged 99.87 tokens/s after first token. These are sampled system-wide observations, not guarantees; the conservative profile bounds remain 5/6 GiB cold and 0.5/0.5 GiB warm.
-
-For M6, ten successive real load/chat/unload cycles completed through durable jobs on this PC. After cycles 2–10, free VRAM ranged from 7,039 to 7,082 MiB and zero `llama-server.exe` processes remained. Available system RAM was 10.24 GiB before the repeated cycles and 10.41 GiB afterward; other desktop activity can affect these system-wide samples. The offline suite also repeats fake text/image/text handoffs and injects OOM rather than deliberately exhausting the GPU.
-
-## Checks
-
-```powershell
-uv run --offline --locked --python 3.12 pytest
-uv run --offline --locked --python 3.12 ruff check .
-uv run --offline --locked --python 3.12 ruff format --check .
-uv run --offline --locked --python 3.12 mypy src/jarvis
-```
-
-The tests use temporary real SQLite databases, fake Windows processes, recorded HTTP/stream fixtures, and local ASGI requests; they run offline. M8 also checks the fixed image workflow, artifact crash windows, cancellation, and fake text/image/text handoff. The M5 live check used `read_text_file`, saved its receipt/result, then answered a follow-up after restart using that result without another file read. See `ARCHITECTURE.md` for the design and later milestones.
+Jarvis is in active development. This describes the project vision; delegation and priority-based model orchestration are goals, rather than completed capabilities. The current implementation runs locally on Windows and executes one request at a time.
